@@ -13,14 +13,18 @@ import {
 } from "@/lib/arbok/providers";
 import { getDatabasePath } from "./db";
 
+function getBaseDataDir(): string {
+  return process.env.ARBOK_DATA_DIR ?? path.join(process.cwd(), "data");
+}
+
 export function getModelsDir(): string {
-  return process.env.ARBOK_MODELS_DIR ?? path.join(process.cwd(), "data", "models");
+  return process.env.ARBOK_MODELS_DIR ?? path.join(getBaseDataDir(), "models");
 }
 
 export function getAudioCacheDir(): string {
   return (
     process.env.ARBOK_CACHE_DIR ??
-    path.join(process.cwd(), "data", "cache", "audio")
+    path.join(getBaseDataDir(), "cache", "audio")
   );
 }
 

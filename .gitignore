@@ -39,6 +39,9 @@ yarn-error.log*
 # local runtime data (SQLite db, audio cache, ASR models)
 /data
 
+# electron-builder output installers (.dmg / .zip)
+/release
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

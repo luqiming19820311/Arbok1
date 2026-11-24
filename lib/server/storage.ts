@@ -4,16 +4,20 @@ import type { StorageUsage } from "@/components/arbok/types";
 import { getAppSettings } from "./db";
 import { getAudioCacheDir } from "./env";
 
+function getBaseDataDir(): string {
+  return process.env.ARBOK_DATA_DIR ?? path.join(process.cwd(), "data");
+}
+
 export function getOfflineDir(): string {
   return (
-    process.env.ARBOK_OFFLINE_DIR ?? path.join(process.cwd(), "data", "offline")
+    process.env.ARBOK_OFFLINE_DIR ?? path.join(getBaseDataDir(), "offline")
   );
 }
 
 export function getLocalMediaDir(): string {
   return (
     process.env.ARBOK_LOCAL_MEDIA_DIR ??
-    path.join(process.cwd(), "data", "local-media")
+    path.join(getBaseDataDir(), "local-media")
   );
 }
 

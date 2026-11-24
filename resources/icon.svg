@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="arbokGrad" x1="80" y1="80" x2="944" y2="944" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0062CC" />
+      <stop offset="100%" stop-color="#5856D6" />
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#arbokGrad)" />
+  <path
+    d="M277 661C341 491 418 363 512 363C606 363 576 661 674 661C725 661 759 589 789 512"
+    stroke="#FFFFFF"
+    stroke-width="94"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

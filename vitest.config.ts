@@ -14,5 +14,6 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     css: false,
     testTimeout: 20_000,
+    exclude: ["node_modules/**", ".next/**", "release/**", "out/**"],
   },
 });

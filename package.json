@@ -2,6 +2,8 @@
   "name": "arbok",
   "version": "0.1.0",
   "private": true,
+  "description": "Arbok — 支持 YouTube、哔哩哔哩、播客，配中文字幕、翻译和播报、AI 导读、AI 问答与笔记功能",
+  "main": "electron/main.cjs",
   "repository": {
     "type": "git",
     "url": "https://github.com/luqiming19820311/Arbok1.git"
@@ -11,11 +13,57 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dist:prepare": "npm run build && node scripts/prepare-standalone.mjs",
+    "dist:mac": "npm run dist:prepare && electron-builder --mac dmg zip"
+  },
+  "build": {
+    "appId": "com.luqiming.arbok",
+    "productName": "Arbok",
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "afterPack": "scripts/after-pack.cjs",
+    "mac": {
+      "category": "public.app-category.education",
+      "icon": "resources/icon.icns",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Arbok ${version}",
+      "artifactName": "Arbok-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "luqiming19820311",
+        "repo": "Arbok1"
+      }
+    ]
   },
   "dependencies": {
     "@ui-sdk/core": "^0.1.0-beta.13",
     "@ui-sdk/react": "^0.1.0-beta.13",
+    "electron-updater": "^6.8.11",
     "lucide-react": "^1.77.0",
     "next": "16.4.6",
     "qrcode": "^1.5.4",
@@ -32,6 +80,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "jsdom": "^29.1.1",

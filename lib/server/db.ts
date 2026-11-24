@@ -27,7 +27,8 @@ export function getDatabasePath(): string {
   if (process.env.ARBOK_DB_PATH) {
     return process.env.ARBOK_DB_PATH;
   }
-  return path.join(process.cwd(), "data", "arbok.db");
+  const dataDir = process.env.ARBOK_DATA_DIR ?? path.join(process.cwd(), "data");
+  return path.join(dataDir, "arbok.db");
 }
 
 function initSchema(db: DatabaseSync): void {

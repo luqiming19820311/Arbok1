@@ -18,7 +18,8 @@ import { getSecret } from "./keychain";
 import { proxyFetch } from "./proxy";
 
 function getTtsModelsDir(): string {
-  return process.env.ARBOK_TTS_MODELS_DIR || path.join(process.cwd(), "data", "models", "tts");
+  const baseDir = process.env.ARBOK_DATA_DIR ?? path.join(process.cwd(), "data");
+  return process.env.ARBOK_TTS_MODELS_DIR || path.join(baseDir, "models", "tts");
 }
 
 export function listLocalTtsModels(): LocalTtsModel[] {

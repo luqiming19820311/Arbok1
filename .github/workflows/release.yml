@@ -15,8 +15,8 @@ permissions:
   contents: write
 
 jobs:
-  verify-and-release:
-    runs-on: ubuntu-latest
+  build-and-release-mac:
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -50,6 +50,11 @@ jobs:
       - name: Typegen, Lint, Typecheck, and Test
         run: npx next typegen && npm run lint && npx tsc --noEmit && npm test
 
+      - name: Package macOS .dmg and .zip
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist:mac
+
       - name: Generate OTA manifest (latest.json)
         run: |
           node -e '
@@ -62,21 +67,24 @@ jobs:
               publishedAt: new Date().toISOString(),
               releaseUrl: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${process.env.RELEASE_TAG}`
             };
-            fs.writeFileSync("latest.json", JSON.stringify(manifest, null, 2) + "\n");
+            fs.writeFileSync("release/latest.json", JSON.stringify(manifest, null, 2) + "\n");
           '
 
-      # Desktop packaging note:
-      # When Electron / Tauri packaging is enabled, add a macos-latest / windows-latest build job
-      # that builds .dmg / .zip / latest-mac.yml and uploads them alongside latest.json below.
-
-      - name: Create or update GitHub Release
+      - name: Create or update GitHub Release with .dmg / .zip / OTA manifests
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          ASSETS=(release/latest.json)
+          for f in release/*.dmg release/*.zip release/latest-mac.yml; do
+            if [ -f "$f" ]; then
+              ASSETS+=("$f")
+            fi
+          done
+          echo "Uploading assets: ${ASSETS[*]}"
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" latest.json --clobber
+            gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --clobber
           else
-            gh release create "${RELEASE_TAG}" latest.json \
+            gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
               --title "Arbok V${RELEASE_VERSION}" \
               --generate-notes
           fi
