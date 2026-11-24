@@ -1,0 +1,3623 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arbok — 全平台音视频知识播放器（交互原型）</title>
+  <style>
+    /* =====================================================================
+       Arbok Design System — macOS Native Minimalist Reading Aesthetic
+       ===================================================================== */
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+      --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+      /* Light Theme (Apple HIG Inspired) */
+      --bg-app: #ffffff;
+      --bg-sidebar: rgba(245, 245, 247, 0.86);
+      --bg-surface: #ffffff;
+      --bg-subtle: #f5f5f7;
+      --bg-hover: rgba(0, 0, 0, 0.045);
+      --bg-active: rgba(10, 132, 255, 0.11);
+      --bg-active-row: rgba(10, 132, 255, 0.085);
+      --bg-segmented: rgba(118, 118, 128, 0.12);
+      --bg-segmented-active: #ffffff;
+      --bg-miniplayer: rgba(250, 250, 252, 0.88);
+      --bg-modal: rgba(255, 255, 255, 0.96);
+      --bg-backdrop: rgba(15, 23, 42, 0.32);
+
+      --border-hairline: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.14);
+
+      --text-primary: #1d1d1f;
+      --text-secondary: #515154;
+      --text-tertiary: #86868b;
+      --text-on-accent: #ffffff;
+
+      --accent: #007aff;
+      --accent-hover: #0066d6;
+      --accent-soft: rgba(0, 122, 255, 0.1);
+
+      /* Platform subtle accents */
+      --plat-podcast: #8b5cf6;
+      --plat-podcast-bg: rgba(139, 92, 246, 0.11);
+      --plat-youtube: #e11d48;
+      --plat-youtube-bg: rgba(225, 29, 72, 0.1);
+      --plat-bilibili: #fb7299;
+      --plat-bilibili-bg: rgba(251, 114, 153, 0.12);
+      --plat-xiaoyuzhou: #0ea5e9;
+      --plat-xiaoyuzhou-bg: rgba(14, 165, 233, 0.11);
+
+      --status-green: #16a34a;
+      --status-green-bg: rgba(22, 163, 74, 0.11);
+      --status-amber: #d97706;
+      --status-amber-bg: rgba(217, 119, 6, 0.11);
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.06);
+      --shadow-cover: 0 20px 44px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+      --shadow-segmented: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 1px rgba(0, 0, 0, 0.04);
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --sidebar-width: 236px;
+      --miniplayer-height: 68px;
+    }
+
+    [data-theme="dark"] {
+      --bg-app: #1c1c1e;
+      --bg-sidebar: rgba(22, 22, 24, 0.9);
+      --bg-surface: #242426;
+      --bg-subtle: #2c2c2e;
+      --bg-hover: rgba(255, 255, 255, 0.065);
+      --bg-active: rgba(10, 132, 255, 0.22);
+      --bg-active-row: rgba(10, 132, 255, 0.15);
+      --bg-segmented: rgba(118, 118, 128, 0.24);
+      --bg-segmented-active: #3a3a3c;
+      --bg-miniplayer: rgba(28, 28, 30, 0.9);
+      --bg-modal: rgba(34, 34, 36, 0.98);
+      --bg-backdrop: rgba(0, 0, 0, 0.56);
+
+      --border-hairline: rgba(255, 255, 255, 0.085);
+      --border-strong: rgba(255, 255, 255, 0.15);
+
+      --text-primary: #f5f5f7;
+      --text-secondary: #b4b4ba;
+      --text-tertiary: #7d7d84;
+
+      --accent: #0a84ff;
+      --accent-hover: #3898ff;
+      --accent-soft: rgba(10, 132, 255, 0.18);
+
+      --plat-podcast: #a78bfa;
+      --plat-podcast-bg: rgba(167, 139, 250, 0.16);
+      --plat-youtube: #fb7185;
+      --plat-youtube-bg: rgba(251, 113, 133, 0.16);
+      --plat-bilibili: #ff85a8;
+      --plat-bilibili-bg: rgba(255, 133, 168, 0.16);
+      --plat-xiaoyuzhou: #38bdf8;
+      --plat-xiaoyuzhou-bg: rgba(56, 189, 248, 0.16);
+
+      --status-green: #4ade80;
+      --status-green-bg: rgba(74, 222, 128, 0.15);
+      --status-amber: #fbbf24;
+      --status-amber-bg: rgba(251, 191, 36, 0.15);
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+      --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.36);
+      --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      --shadow-cover: 0 24px 48px rgba(0, 0, 0, 0.48);
+      --shadow-segmented: 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      font-family: var(--font-sans);
+      background: var(--bg-app);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      user-select: none;
+    }
+
+    button, input, textarea, select {
+      font-family: inherit;
+      color: inherit;
+      outline: none;
+    }
+
+    button {
+      border: none;
+      background: none;
+      cursor: pointer;
+    }
+
+    .tabular {
+      font-variant-numeric: tabular-nums;
+      font-family: var(--font-mono);
+    }
+
+    /* Scrollbars — ultra subtle macOS style */
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 136, 0.24);
+      border-radius: 99px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(128, 128, 136, 0.42);
+    }
+
+    /* =====================================================================
+       App Shell Layout
+       ===================================================================== */
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+      background: var(--bg-app);
+      position: relative;
+    }
+
+    .app-body {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* =====================================================================
+       Left Translucent Sidebar
+       ===================================================================== */
+    .sidebar {
+      width: var(--sidebar-width);
+      flex-shrink: 0;
+      background: var(--bg-sidebar);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-right: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      transition: width 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+      z-index: 10;
+    }
+
+    .sidebar.collapsed {
+      width: 0;
+      border-right: none;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .sidebar-topbar {
+      height: 48px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .traffic-lights {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .tl-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+    }
+    .tl-red { background: #ff5f57; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.12); }
+    .tl-yellow { background: #febc2e; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.12); }
+    .tl-green { background: #28c840; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.12); }
+
+    .brand-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-display);
+      font-weight: 650;
+      font-size: 13.5px;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: background 0.15s, color 0.15s;
+    }
+    .icon-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .sidebar-action {
+      padding: 4px 12px 12px;
+    }
+
+    .btn-primary-add {
+      width: 100%;
+      height: 34px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--text-on-accent);
+      font-size: 13px;
+      font-weight: 550;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 1px 2px rgba(0, 122, 255, 0.25);
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn-primary-add:hover {
+      background: var(--accent-hover);
+    }
+    .btn-primary-add:active {
+      transform: scale(0.985);
+    }
+    .kbd-hint {
+      font-size: 10.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      font-weight: 500;
+      margin-left: 4px;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 8px 12px;
+    }
+
+    .nav-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      padding: 14px 10px 6px;
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-item {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 450;
+      color: var(--text-secondary);
+      transition: background 0.14s, color 0.14s;
+      text-align: left;
+      margin-bottom: 1px;
+    }
+    .nav-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    .nav-item.active {
+      background: var(--bg-active);
+      color: var(--accent);
+      font-weight: 560;
+    }
+    .nav-item .nav-title {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .nav-badge {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+      padding: 1px 6px;
+      border-radius: 99px;
+      background: var(--bg-hover);
+    }
+    .nav-item.active .nav-badge {
+      background: rgba(0, 122, 255, 0.14);
+      color: var(--accent);
+    }
+
+    .sub-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-podcast { background: var(--plat-podcast); }
+    .dot-youtube { background: var(--plat-youtube); }
+    .dot-bilibili { background: var(--plat-bilibili); }
+    .dot-xiaoyuzhou { background: var(--plat-xiaoyuzhou); }
+
+    .sidebar-footer {
+      border-top: 1px solid var(--border-hairline);
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    /* =====================================================================
+       Main Content Area
+       ===================================================================== */
+    .main-area {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-app);
+      position: relative;
+    }
+
+    /* List View Header */
+    .list-header {
+      height: 52px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .list-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .view-title {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+
+    .filter-pills {
+      display: flex;
+      align-items: center;
+      background: var(--bg-segmented);
+      padding: 2px;
+      border-radius: 8px;
+      gap: 2px;
+    }
+    .filter-pill {
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+    .filter-pill:hover {
+      color: var(--text-primary);
+    }
+    .filter-pill.active {
+      background: var(--bg-segmented-active);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-segmented);
+      font-weight: 560;
+    }
+
+    .list-header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-box svg {
+      position: absolute;
+      left: 9px;
+      color: var(--text-tertiary);
+      pointer-events: none;
+    }
+    .search-input {
+      height: 30px;
+      width: 210px;
+      padding: 0 10px 0 30px;
+      border-radius: 7px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-subtle);
+      font-size: 12.5px;
+      transition: border-color 0.15s, width 0.2s, background 0.15s;
+    }
+    .search-input:focus {
+      border-color: var(--accent);
+      background: var(--bg-surface);
+      width: 245px;
+    }
+    .search-input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .btn-subtle {
+      height: 30px;
+      padding: 0 11px;
+      border-radius: 7px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s;
+    }
+    .btn-subtle:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+
+    /* Episode List Scroll */
+    .list-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 24px 28px;
+    }
+
+    .episode-list {
+      max-width: 960px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .episode-card {
+      display: flex;
+      gap: 16px;
+      padding: 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s, box-shadow 0.15s, background 0.15s;
+      align-items: center;
+    }
+    .episode-card:hover {
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+    .episode-card.is-playing {
+      border-color: rgba(0, 122, 255, 0.4);
+      background: var(--bg-active-row);
+    }
+
+    .ep-thumb {
+      width: 124px;
+      height: 76px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      box-shadow: var(--shadow-sm);
+    }
+    .ep-thumb.is-square {
+      width: 76px;
+      height: 76px;
+    }
+    .ep-thumb-duration {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.68);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+    .ep-thumb-play {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .episode-card:hover .ep-thumb-play,
+    .episode-card.is-playing .ep-thumb-play {
+      opacity: 1;
+    }
+
+    .ep-meta {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .ep-top-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .plat-tag {
+      font-size: 11px;
+      font-weight: 560;
+      padding: 2px 7px;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .plat-podcast { color: var(--plat-podcast); background: var(--plat-podcast-bg); }
+    .plat-youtube { color: var(--plat-youtube); background: var(--plat-youtube-bg); }
+    .plat-bilibili { color: var(--plat-bilibili); background: var(--plat-bilibili-bg); }
+    .plat-xiaoyuzhou { color: var(--plat-xiaoyuzhou); background: var(--plat-xiaoyuzhou-bg); }
+
+    .ep-channel {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+    .ep-date {
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .ep-title {
+      font-size: 14.5px;
+      font-weight: 600;
+      line-height: 1.4;
+      color: var(--text-primary);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .ep-bottom-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 2px;
+    }
+
+    .ep-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .status-chip {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 5px;
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .status-chip.good {
+      background: var(--status-green-bg);
+      color: var(--status-green);
+    }
+    .status-chip.ai {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .status-chip.warn {
+      background: var(--status-amber-bg);
+      color: var(--status-amber);
+    }
+
+    .ep-progress-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 130px;
+    }
+    .ep-progress-track {
+      flex: 1;
+      height: 4px;
+      background: var(--bg-segmented);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .ep-progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 99px;
+    }
+    .ep-progress-text {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+    }
+
+    /* =====================================================================
+       View 2: Immersive Split-View Player
+       ===================================================================== */
+    .player-view {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .split-left {
+      width: 47%;
+      min-width: 340px;
+      max-width: 66%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-app);
+      overflow-y: auto;
+    }
+
+    .split-resizer {
+      width: 5px;
+      cursor: col-resize;
+      background: transparent;
+      border-left: 1px solid var(--border-hairline);
+      flex-shrink: 0;
+      transition: background 0.15s;
+      position: relative;
+    }
+    .split-resizer:hover,
+    .split-resizer.dragging {
+      background: var(--accent-soft);
+      border-left-color: var(--accent);
+    }
+
+    .split-right {
+      flex: 1;
+      min-width: 360px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-app);
+      min-height: 0;
+    }
+
+    .pane-topbar {
+      height: 48px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      padding: 5px 9px;
+      border-radius: 7px;
+      margin-left: -6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .back-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .left-player-body {
+      flex: 1;
+      padding: 24px 26px 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      max-width: 640px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* Media Stage (Video 16:9 or Audio Square Cover) */
+    .media-stage-video {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: var(--radius-lg);
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-cover);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px 16px;
+      color: #ffffff;
+    }
+
+    .video-grid-pattern {
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle at 22% 24%, rgba(255,255,255,0.16), transparent 45%),
+        radial-gradient(circle at 80% 78%, rgba(255,255,255,0.12), transparent 50%);
+      pointer-events: none;
+    }
+
+    .video-top-overlay {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .video-badge {
+      font-size: 11px;
+      font-weight: 550;
+      padding: 4px 9px;
+      border-radius: 99px;
+      background: rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(10px);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4ade80;
+    }
+
+    .video-center-visual {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      text-align: center;
+      padding: 0 20px;
+    }
+
+    .video-caption-overlay {
+      position: relative;
+      z-index: 2;
+      align-self: center;
+      max-width: 92%;
+      background: rgba(12, 12, 16, 0.74);
+      backdrop-filter: blur(8px);
+      padding: 7px 14px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 13px;
+      line-height: 1.45;
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+    .video-caption-sub {
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, 0.78);
+      margin-top: 2px;
+    }
+
+    .media-stage-audio {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0 8px;
+    }
+
+    .audio-cover-box {
+      width: 220px;
+      height: 220px;
+      border-radius: 18px;
+      box-shadow: var(--shadow-cover);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      position: relative;
+      overflow: hidden;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .eq-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 18px;
+      margin-top: 14px;
+    }
+    .eq-bar {
+      width: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.85);
+      height: 5px;
+      transition: height 0.2s;
+    }
+    .playing .eq-bar {
+      animation: eqBounce 0.9s ease-in-out infinite alternate;
+    }
+    .playing .eq-bar:nth-child(2) { animation-delay: 0.15s; }
+    .playing .eq-bar:nth-child(3) { animation-delay: 0.35s; }
+    .playing .eq-bar:nth-child(4) { animation-delay: 0.1s; }
+    .playing .eq-bar:nth-child(5) { animation-delay: 0.28s; }
+    @keyframes eqBounce {
+      0% { height: 4px; }
+      100% { height: 18px; }
+    }
+
+    .player-ep-info {
+      margin-top: 22px;
+    }
+    .player-ep-title {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 650;
+      line-height: 1.38;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+    .player-ep-sub {
+      margin-top: 7px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      color: var(--text-tertiary);
+      flex-wrap: wrap;
+    }
+
+    /* Scrubber */
+    .scrubber-block {
+      margin-top: 22px;
+    }
+    .scrubber-track {
+      height: 6px;
+      background: var(--bg-segmented);
+      border-radius: 99px;
+      position: relative;
+      cursor: pointer;
+    }
+    .scrubber-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 99px;
+      position: relative;
+    }
+    .scrubber-thumb {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 2px solid var(--accent);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+      position: absolute;
+      right: -6px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .scrubber-times {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 7px;
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Transport Controls */
+    .transport-row {
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .transport-center {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .btn-play-main {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--text-primary);
+      color: var(--bg-app);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow-md);
+      transition: transform 0.12s, opacity 0.15s;
+    }
+    .btn-play-main:hover { opacity: 0.9; transform: scale(1.03); }
+    .btn-play-main:active { transform: scale(0.96); }
+
+    .btn-skip {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 600;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-skip:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .player-tools-row {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tool-pill {
+      height: 29px;
+      padding: 0 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-subtle);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s;
+    }
+    .tool-pill:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    .tool-pill.active {
+      background: var(--accent-soft);
+      border-color: rgba(0, 122, 255, 0.3);
+      color: var(--accent);
+    }
+
+    /* =====================================================================
+       Right Pane: Segmented Control + Transcript / AI Guide / Q&A / Notes
+       ===================================================================== */
+    .segmented-tabs {
+      display: inline-flex;
+      background: var(--bg-segmented);
+      padding: 2.5px;
+      border-radius: 8px;
+      gap: 2px;
+    }
+    .seg-tab {
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 5px 13px;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .seg-tab:hover { color: var(--text-primary); }
+    .seg-tab.active {
+      background: var(--bg-segmented-active);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-segmented);
+      font-weight: 580;
+    }
+
+    .sub-toolbar {
+      padding: 9px 18px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-shrink: 0;
+      background: var(--bg-app);
+    }
+    .sub-toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .right-panel-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 18px 40px;
+      position: relative;
+      user-select: text;
+    }
+
+    /* Subtitle Rows */
+    .subtitle-row {
+      display: flex;
+      gap: 14px;
+      padding: 11px 14px;
+      border-radius: 9px;
+      cursor: pointer;
+      position: relative;
+      border-left: 3px solid transparent;
+      transition: background 0.14s, border-color 0.14s;
+      margin-bottom: 3px;
+    }
+    .subtitle-row:hover {
+      background: var(--bg-hover);
+    }
+    .subtitle-row.active {
+      background: var(--bg-active-row);
+      border-left-color: var(--accent);
+    }
+    .subtitle-row.has-note {
+      border-left-color: var(--status-amber);
+    }
+    .subtitle-row.active.has-note {
+      border-left-color: var(--accent);
+    }
+
+    .sub-ts {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+      padding-top: 3px;
+      width: 42px;
+      flex-shrink: 0;
+    }
+    .subtitle-row.active .sub-ts {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .sub-texts {
+      flex: 1;
+      min-width: 0;
+    }
+    .sub-orig {
+      font-size: 14px;
+      line-height: 1.62;
+      color: var(--text-primary);
+      font-weight: 450;
+    }
+    .subtitle-row.active .sub-orig {
+      font-weight: 550;
+    }
+    .sub-trans {
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      margin-top: 3px;
+    }
+    .sub-trans.primary-zh {
+      font-size: 14.5px;
+      color: var(--text-primary);
+      margin-top: 0;
+    }
+
+    .sub-actions {
+      position: absolute;
+      right: 10px;
+      top: 8px;
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.14s;
+      background: var(--bg-surface);
+      padding: 2px;
+      border-radius: 7px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border-hairline);
+    }
+    .subtitle-row:hover .sub-actions {
+      opacity: 1;
+    }
+
+    .sub-micro-btn {
+      font-size: 11.5px;
+      padding: 3px 7px;
+      border-radius: 5px;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .sub-micro-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .inline-note-chip {
+      margin-top: 8px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      background: var(--status-amber-bg);
+      color: var(--text-primary);
+      font-size: 12.5px;
+      line-height: 1.5;
+      border-left: 2px solid var(--status-amber);
+    }
+
+    .inline-note-editor {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-strong);
+    }
+    .inline-note-editor textarea {
+      width: 100%;
+      min-height: 58px;
+      border: none;
+      background: transparent;
+      font-size: 13px;
+      line-height: 1.5;
+      resize: vertical;
+    }
+
+    .mark-highlight {
+      background: rgba(250, 204, 21, 0.36);
+      color: inherit;
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+
+    .jump-current-fab {
+      position: sticky;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      border-radius: 99px;
+      background: var(--text-primary);
+      color: var(--bg-app);
+      font-size: 12px;
+      font-weight: 550;
+      box-shadow: var(--shadow-md);
+      z-index: 5;
+    }
+
+    /* No Subtitle / ASR Empty Card */
+    .asr-empty-card {
+      margin: 40px auto;
+      max-width: 420px;
+      padding: 28px 24px;
+      border-radius: var(--radius-lg);
+      border: 1px dashed var(--border-strong);
+      background: var(--bg-subtle);
+      text-align: center;
+    }
+    .asr-empty-card h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .asr-empty-card p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 18px;
+    }
+
+    /* AI Guide Panel */
+    .guide-section {
+      margin-bottom: 22px;
+    }
+    .guide-section-title {
+      font-size: 12px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-tertiary);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tldr-card {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      background: var(--accent-soft);
+      border: 1px solid rgba(0, 122, 255, 0.16);
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text-primary);
+    }
+
+    .timeline-item {
+      display: flex;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 9px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .timeline-item:hover {
+      background: var(--bg-hover);
+    }
+    .ts-pill {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 2px 7px;
+      border-radius: 5px;
+      height: fit-content;
+      flex-shrink: 0;
+      cursor: pointer;
+      display: inline-block;
+    }
+    .ts-pill:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .takeaway-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .takeaway-list li {
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: var(--text-primary);
+      padding-left: 16px;
+      position: relative;
+    }
+    .takeaway-list li::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      position: absolute;
+      left: 2px;
+      top: 9px;
+    }
+
+    .highlight-clip-card {
+      padding: 12px 14px;
+      border-radius: 9px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .highlight-clip-card:hover {
+      border-color: var(--accent);
+      background: var(--bg-active-row);
+    }
+
+    /* AI Chat Panel */
+    .chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      user-select: text;
+    }
+    .chat-bubble {
+      max-width: 90%;
+      padding: 11px 14px;
+      border-radius: 12px;
+      font-size: 13.5px;
+      line-height: 1.65;
+    }
+    .chat-bubble.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #ffffff;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-bubble.assistant {
+      align-self: flex-start;
+      background: var(--bg-subtle);
+      color: var(--text-primary);
+      border: 1px solid var(--border-hairline);
+      border-bottom-left-radius: 4px;
+    }
+    .quick-prompts {
+      padding: 0 18px 10px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .quick-chip {
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: 99px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+    .quick-chip:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .chat-input-bar {
+      padding: 10px 18px 14px;
+      border-top: 1px solid var(--border-hairline);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .chat-input {
+      flex: 1;
+      height: 36px;
+      padding: 0 13px;
+      border-radius: 9px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-subtle);
+      font-size: 13px;
+    }
+    .chat-input:focus {
+      border-color: var(--accent);
+      background: var(--bg-surface);
+    }
+
+    /* Notes Panel */
+    .note-card {
+      padding: 13px 15px;
+      border-radius: 10px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      margin-bottom: 10px;
+    }
+    .note-quote {
+      font-size: 13px;
+      color: var(--text-secondary);
+      border-left: 2.5px solid var(--border-strong);
+      padding-left: 10px;
+      margin: 8px 0;
+      line-height: 1.55;
+    }
+    .note-body {
+      font-size: 13.5px;
+      color: var(--text-primary);
+      line-height: 1.55;
+    }
+
+    /* =====================================================================
+       Persistent Bottom Mini-Player
+       ===================================================================== */
+    .mini-player {
+      height: var(--miniplayer-height);
+      border-top: 1px solid var(--border-hairline);
+      background: var(--bg-miniplayer);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      flex-shrink: 0;
+      z-index: 20;
+    }
+    .mini-player.hidden {
+      display: none;
+    }
+
+    .mini-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 30%;
+      min-width: 210px;
+      cursor: pointer;
+    }
+    .mini-cover {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .mini-info {
+      min-width: 0;
+    }
+    .mini-title {
+      font-size: 13px;
+      font-weight: 580;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mini-sub {
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+      margin-top: 2px;
+    }
+
+    .mini-center {
+      flex: 1;
+      max-width: 460px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+    .mini-controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .mini-play-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--text-primary);
+      color: var(--bg-app);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .mini-progress-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+    }
+
+    .mini-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 22%;
+      justify-content: flex-end;
+    }
+
+    /* =====================================================================
+       Modals (Add Content / Settings / Markdown Export)
+       ===================================================================== */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: var(--bg-backdrop);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 20px;
+    }
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-box {
+      width: 100%;
+      max-width: 560px;
+      background: var(--bg-modal);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+      animation: modalPop 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .modal-box.wide {
+      max-width: 720px;
+    }
+    @keyframes modalPop {
+      from { opacity: 0; transform: scale(0.96) translateY(6px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .modal-header {
+      padding: 15px 20px;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-title {
+      font-size: 15px;
+      font-weight: 630;
+    }
+    .modal-body {
+      padding: 18px 20px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-hairline);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 560;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .form-input, .form-select {
+      width: 100%;
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-subtle);
+      font-size: 13px;
+    }
+    .form-input:focus, .form-select:focus {
+      border-color: var(--accent);
+      background: var(--bg-surface);
+    }
+    .form-hint {
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+
+    .btn-accent {
+      height: 33px;
+      padding: 0 15px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 550;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-accent:hover { background: var(--accent-hover); }
+
+    /* Settings Split Layout */
+    .settings-grid {
+      display: flex;
+      height: 440px;
+    }
+    .settings-nav {
+      width: 176px;
+      border-right: 1px solid var(--border-hairline);
+      padding: 12px 8px;
+      background: var(--bg-subtle);
+      flex-shrink: 0;
+    }
+    .settings-pane {
+      flex: 1;
+      padding: 20px 22px;
+      overflow-y: auto;
+    }
+    .setting-group {
+      margin-bottom: 18px;
+    }
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 9px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-surface);
+      margin-bottom: 8px;
+    }
+
+    .qr-box {
+      width: 128px;
+      height: 128px;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 10px;
+      border: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .md-preview {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-hairline);
+      border-radius: 9px;
+      padding: 14px;
+      white-space: pre-wrap;
+      user-select: text;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-16px);
+      background: var(--text-primary);
+      color: var(--bg-app);
+      padding: 8px 16px;
+      border-radius: 99px;
+      font-size: 12.5px;
+      font-weight: 520;
+      box-shadow: var(--shadow-md);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+      z-index: 300;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .spinner {
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="app-body">
+      <!-- ==================== LEFT SIDEBAR ==================== -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-topbar">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="traffic-lights" aria-hidden="true">
+              <span class="tl-dot tl-red"></span>
+              <span class="tl-dot tl-yellow"></span>
+              <span class="tl-dot tl-green"></span>
+            </div>
+            <div class="brand-pill">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <rect width="24" height="24" rx="6" fill="url(#arbokGrad)"/>
+                <path d="M6.5 15.5C8 11.5 9.8 8.5 12 8.5C14.2 8.5 13.5 15.5 15.8 15.5C17 15.5 17.8 13.8 18.5 12" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <defs>
+                  <linearGradient id="arbokGrad" x1="0" y1="0" x2="24" y2="24">
+                    <stop stop-color="#007AFF"/>
+                    <stop offset="1" stop-color="#5856D6"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+              <span>Arbok</span>
+            </div>
+          </div>
+          <button class="icon-btn" id="btnCollapseSidebar" title="折叠侧栏">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+          </button>
+        </div>
+
+        <div class="sidebar-action">
+          <button class="btn-primary-add" id="btnOpenAdd">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>添加链接 / 订阅</span>
+            <span class="kbd-hint">⌘N</span>
+          </button>
+        </div>
+
+        <div class="sidebar-scroll" id="sidebarNav">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <div class="sidebar-footer">
+          <button class="nav-item" id="btnOpenSettings" style="margin:0;flex:1;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span class="nav-title">设置</span>
+            <span style="font-size:11px;color:var(--text-tertiary);">⌘,</span>
+          </button>
+          <button class="icon-btn" id="btnToggleTheme" title="切换浅色 / 深色模式">
+            <svg id="themeIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </div>
+      </aside>
+
+      <!-- ==================== MAIN CONTENT AREA ==================== -->
+      <main class="main-area" id="mainArea">
+        <!-- Rendered dynamically: List View OR Immersive Split-View Player -->
+      </main>
+    </div>
+
+    <!-- ==================== PERSISTENT MINI-PLAYER ==================== -->
+    <div class="mini-player hidden" id="miniPlayer">
+      <!-- Rendered dynamically when browsing list with an active episode -->
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADD LINK / SUBSCRIBE ==================== -->
+  <div class="modal-backdrop" id="modalAdd">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">添加内容或订阅</span>
+        <button class="icon-btn" onclick="closeModal('modalAdd')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="segmented-tabs" style="margin-bottom:16px;">
+          <button class="seg-tab active" id="addTabUrl" onclick="switchAddTab('url')">粘贴链接</button>
+          <button class="seg-tab" id="addTabSearch" onclick="switchAddTab('search')">搜索 Apple 播客</button>
+        </div>
+
+        <div id="addUrlPane">
+          <label class="form-label">支持播客 RSS / 小宇宙 / YouTube / B站（频道、UP主或单视频）</label>
+          <input class="form-input" id="urlInput" placeholder="例如：https://www.bilibili.com/video/BV1xx411c7mD 或 YouTube / RSS 链接" oninput="detectUrlPlatform(this.value)" />
+          <div id="urlDetectStatus" class="form-hint">粘贴任意链接，Arbok 将自动识别平台并提取元数据与字幕。</div>
+          <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:11.5px;color:var(--text-tertiary);line-height:24px;">快速填入示例：</span>
+            <button class="quick-chip" onclick="fillDemoUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ')">YouTube 视频</button>
+            <button class="quick-chip" onclick="fillDemoUrl('https://www.bilibili.com/video/BV1Arbok2026')">B站 BV 视频</button>
+            <button class="quick-chip" onclick="fillDemoUrl('https://www.xiaoyuzhoufm.com/episode/67a9f12c')">小宇宙单集</button>
+            <button class="quick-chip" onclick="fillDemoUrl('https://feeds.transistor.fm/acquired')">播客 RSS</button>
+          </div>
+        </div>
+
+        <div id="addSearchPane" style="display:none;">
+          <input class="form-input" id="podcastSearchInput" placeholder="输入中英文播客名称，如 Lex Fridman / 科技早知道 / Acquired..." oninput="renderPodcastSearch(this.value)" />
+          <div id="podcastSearchResults" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+      </div>
+      <div class="modal-footer" id="addModalFooter">
+        <button class="btn-subtle" onclick="closeModal('modalAdd')">取消</button>
+        <button class="btn-accent" onclick="submitAddUrl()">解析并加入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: SETTINGS ==================== -->
+  <div class="modal-backdrop" id="modalSettings">
+    <div class="modal-box wide">
+      <div class="modal-header">
+        <span class="modal-title">Arbok 偏好设置</span>
+        <button class="icon-btn" onclick="closeModal('modalSettings')">✕</button>
+      </div>
+      <div class="settings-grid">
+        <div class="settings-nav" id="settingsNav"></div>
+        <div class="settings-pane" id="settingsPane"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: MARKDOWN EXPORT ==================== -->
+  <div class="modal-backdrop" id="modalExport">
+    <div class="modal-box wide">
+      <div class="modal-header">
+        <span class="modal-title">导出 Markdown（适配 Obsidian / Notion）</span>
+        <button class="icon-btn" onclick="closeModal('modalExport')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="md-preview" id="mdPreviewContent"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-subtle" onclick="closeModal('modalExport')">关闭</button>
+        <button class="btn-subtle" onclick="downloadMarkdownFile()">保存 .md 文件</button>
+        <button class="btn-accent" onclick="copyMarkdown()">一键复制全文</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    /* =====================================================================
+       Mock Data — Rich, Realistic Multi-Platform Episodes for Arbok
+       ===================================================================== */
+    const SUBSCRIPTIONS = [
+      { id: "sub-karpathy", name: "Andrej Karpathy", platform: "youtube", count: 1 },
+      { id: "sub-mediastorm", name: "影视飓风", platform: "bilibili", count: 1 },
+      { id: "sub-lex", name: "Lex Fridman Podcast", platform: "podcast", count: 1 },
+      { id: "sub-xyz", name: "科技早知道", platform: "xiaoyuzhou", count: 1 },
+      { id: "sub-limu", name: "跟李沐学AI", platform: "bilibili", count: 1 }
+    ];
+
+    const EPISODES = [
+      {
+        id: "ep-yt-1",
+        subId: "sub-karpathy",
+        platform: "youtube",
+        channel: "Andrej Karpathy",
+        title: "Deep Dive into Local-First AI Agents & Context Engineering (2026)",
+        date: "2 小时前",
+        durationSec: 184,
+        positionSec: 22,
+        mediaType: "video",
+        language: "en",
+        hasOfficialSub: true,
+        isBilingual: true,
+        hasAiGuide: true,
+        isOffline: false,
+        gradient: "linear-gradient(135deg, #1e293b 0%, #312e81 55%, #0f172a 100%)",
+        coverLabel: "LLM 2026",
+        pageUrl: "https://www.youtube.com/watch?v=arbok_demo_1",
+        transcript: [
+          { id: 1, start: 0, end: 14, orig: "Welcome back everyone. Today we are going to peel back the curtain on how modern AI agents actually work under the hood.", zh: "欢迎大家回来。今天我们要揭开现代 AI 智能体底层运作机制的面纱。" },
+          { id: 2, start: 14, end: 29, orig: "Most people still think prompt engineering is about clever phrasing, but the real game in 2026 is context engineering.", zh: "大多数人还以为提示词工程只是遣词造句的技巧，但 2026 年真正的决胜点是上下文工程。" },
+          { id: 3, start: 29, end: 46, orig: "Think of the LLM context window as RAM in a traditional operating system, and your local SQLite database as the hard drive.", zh: "把大模型的上下文窗口想象成传统操作系统的内存，而你本地的 SQLite 数据库就是硬盘。" },
+          { id: 4, start: 46, end: 64, orig: "When you feed a three-hour podcast transcript directly into a model, you want crisp timestamps so every claim stays verifiable.", zh: "当你把三小时的播客文稿直接喂给模型时，你需要精准的时间戳，让每一条结论都能回溯验证。" },
+          { id: 5, start: 64, end: 84, orig: "And notice why local-first desktop apps are making a huge comeback: latency drops to zero and your personal notes never leave your Mac.", zh: "你也会发现为什么本地优先的桌面应用正在强势回归：延迟降为零，而且你的个人笔记永远不会离开你的 Mac。" },
+          { id: 6, start: 84, end: 105, orig: "With Rust handling network proxying and lightweight local ASR models running in isolated subprocesses, one small binary replaces five web tabs.", zh: "用 Rust 处理网络代理，让轻量本地语音识别模型跑在独立子进程里，一个小巧的客户端就能替代五个浏览器标签页。" },
+          { id: 7, start: 105, end: 128, orig: "Let's walk through a concrete benchmark comparing streaming dual-language subtitles with semantic chunk translation.", zh: "我们来实际看一组基准测试，对比流式双语字幕与语义分块翻译的效果差异。" },
+          { id: 8, start: 128, end: 154, orig: "If you include just two sentences of surrounding context per batch, pronoun accuracy jumps from 74% to over 96%.", zh: "只要在每批翻译中附带前后两句上下文，代词指代的准确率就会从 74% 跃升到 96% 以上。" },
+          { id: 9, start: 154, end: 184, orig: "That is the core insight: great AI tools feel calm, deterministic, and completely under the user's control.", zh: "这就是核心洞见：优秀的 AI 工具应该给人沉静、可控且完全由用户主导的体验。" }
+        ],
+        guide: {
+          tldr: "Andrej Karpathy 系统阐述了 2026 年从「提示词工程」转向「上下文工程」的范式迁移，并指出本地优先桌面应用（SQLite + 精准时间戳 + 轻量离线模型）是个人知识消费的最佳形态。",
+          timeline: [
+            { start: 0, title: "为什么是上下文工程而非提示词技巧", summary: "将 LLM 上下文比作操作系统 RAM，强调信息编排的重要性。" },
+            { start: 46, title: "长音频消费中的时间戳可验证性", summary: "AI 总结必须绑定毫秒级时间戳，消除幻觉焦虑。" },
+            { start: 64, title: "Local-First 桌面应用的回归", summary: "零延迟、隐私可控，以及 Rust 子进程隔离的工程优势。" },
+            { start: 105, title: "双语字幕翻译的上下文窗口技巧", summary: "滑动窗口携带前后两句上下文，将指代准确率从 74% 提升至 96%+。" }
+          ],
+          takeaways: [
+            "把上下文窗口当成操作系统的「内存」，把本地 SQLite 当成「硬盘」，按需装配最高信噪比的上下文。",
+            "处理长达数小时的音视频时，带时间戳的原文引用是建立用户信任的关键。",
+            "双语字幕翻译采用 20~30 句分块 + 2 句上下文滑动窗口，能在极低成本下显著提升翻译自然度。"
+          ],
+          highlights: [
+            { start: 29, end: 46, reason: "最形象的架构类比：LLM 上下文 = RAM，本地 SQLite = 硬盘" },
+            { start: 128, end: 154, reason: "可直接落地的双语翻译准确率优化数据（74% → 96%）" }
+          ]
+        },
+        chat: [
+          { role: "user", content: "视频里提到的双语字幕翻译准确率是怎么提升的？" },
+          { role: "assistant", content: "Karpathy 在 [01:45] 引入了语义分块翻译基准测试，并在 [02:08] 给出了核心技巧：**在每一批待翻译字幕中附带前后 2 句上下文**，这样可以让中文译文里的代词指代和术语连贯性准确率从 **74% 提升到 96% 以上**。" }
+        ]
+      },
+      {
+        id: "ep-bili-1",
+        subId: "sub-mediastorm",
+        platform: "bilibili",
+        channel: "影视飓风",
+        title: "耗时半年，我们把一套 8K 影视后期与音频工作流全部搬进了 Mac Studio",
+        date: "5 小时前",
+        durationSec: 160,
+        positionSec: 0,
+        mediaType: "video",
+        language: "zh",
+        hasOfficialSub: true,
+        isBilingual: false,
+        hasAiGuide: true,
+        isOffline: true,
+        gradient: "linear-gradient(135deg, #be185d 0%, #fb7299 55%, #4c1d95 100%)",
+        coverLabel: "8K MAC",
+        pageUrl: "https://www.bilibili.com/video/BV1Arbok8KMac",
+        transcript: [
+          { id: 101, start: 0, end: 18, orig: "大家好这里是影视飓风，今天我们要聊一个拖了半年的大工程：把公司主力剪辑台全面迁移到 Mac 生态。", zh: "" },
+          { id: 102, start: 18, end: 39, orig: "很多同学关心，B 站高码率视频在自建播放器里为什么经常遇到音画不同步或者加载慢？核心其实是 DASH 音视频分离流的处理方式。", zh: "" },
+          { id: 103, start: 39, end: 62, orig: "在实测中我们发现，Apple Silicon 的统一内存架构在同时跑 8K 解码和本地语音转写时，风扇甚至几乎没有转起来。", zh: "" },
+          { id: 104, start: 62, end: 88, orig: "更夸张的是离线字幕工作流：以前一小时的素材上传云端要等十几分钟，现在用本地模型两分钟就能出带时间轴的精准文稿。", zh: "" },
+          { id: 105, start: 88, end: 118, orig: "当然坑也不少，比如万兆 NAS 的 SMB 缓存策略、以及外接雷雳硬盘休眠掉盘的问题，我们在视频后半段都整理了完整避坑清单。", zh: "" },
+          { id: 106, start: 118, end: 160, orig: "如果你也是重度 Mac 用户，希望这期实测能帮你省下几万块的试错成本，记得把关键节点收藏进你的笔记库。", zh: "" }
+        ],
+        guide: {
+          tldr: "影视飓风分享了半年内将 8K 影视与音频后期工作流迁移至 Mac Studio 的全流程实测，重点肯定了 Apple Silicon 统一内存与本地语音转写效率，并给出 NAS 与雷雳存储避坑建议。",
+          timeline: [
+            { start: 0, title: "半年迁移背景与核心挑战", summary: "团队主力工作站从传统 PC 转向 Mac Studio 的起因。" },
+            { start: 18, title: "DASH 流处理与统一内存实测", summary: "解析高码率媒体流处理，以及 8K 解码叠加本地 ASR 的静音表现。" },
+            { start: 62, title: "离线字幕工作流效率对比", summary: "本地模型将 1 小时素材的转写耗时压缩至 2 分钟以内。" },
+            { start: 88, title: "万兆 NAS 与雷雳外接盘避坑", summary: "SMB 缓存配置与硬盘休眠掉盘的实操解决方案。" }
+          ],
+          takeaways: [
+            "Apple Silicon 统一内存在「高码率视频解码 + 本地 AI 语音识别」并发场景下功耗与噪音优势显著。",
+            "本地离线 ASR 将长视频粗剪与文稿定位效率提升了一个数量级。",
+            "构建 Mac 桌面影音工具时，合理处理 DASH 分离流与本地缓存是流畅拖拽的关键。"
+          ],
+          highlights: [
+            { start: 39, end: 62, reason: "8K 解码 + 本地语音转写实测静音表现" },
+            { start: 62, end: 88, reason: "本地离线字幕 vs 云端上传的真实耗时对比" }
+          ]
+        },
+        chat: [
+          { role: "user", content: "这期视频提到了哪些需要避坑的地方？" },
+          { role: "assistant", content: "在 [01:28] 处主要提到了两个硬件与网络协作上的坑：\n1. **万兆 NAS 的 SMB 缓存策略**配置不当会导致素材拖动卡顿；\n2. **外接雷雳硬盘休眠掉盘**问题，需要在系统电源与外设设置中进行针对性调整。" }
+        ]
+      },
+      {
+        id: "ep-pod-1",
+        subId: "sub-lex",
+        platform: "podcast",
+        channel: "Lex Fridman Podcast",
+        title: "#462 — Designing Calm Software That Respects Human Attention",
+        date: "昨天",
+        durationSec: 150,
+        positionSec: 45,
+        mediaType: "audio",
+        language: "en",
+        hasOfficialSub: true,
+        isBilingual: true,
+        hasAiGuide: true,
+        isOffline: true,
+        gradient: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #1e1b4b 100%)",
+        coverLabel: "LEX #462",
+        pageUrl: "https://lexfridman.com/podcast/462",
+        transcript: [
+          { id: 201, start: 0, end: 22, orig: "The following is a conversation about craft, minimalism, and why the best tools feel like a quiet library rather than a casino.", zh: "接下来是一场关于匠心、极简主义的对话，探讨为什么最好的工具应该像安静的图书馆，而不是喧闹的赌场。" },
+          { id: 202, start: 22, end: 48, orig: "When you open a media platform today, algorithms fight for every millisecond of your attention with red badges and autoplay feeds.", zh: "如今打开大多数内容平台，算法都在用小红点和自动播放信息流争夺你每一毫秒的注意力。" },
+          { id: 203, start: 48, end: 76, orig: "Pulling your favorite podcasts, YouTube channels, and independent creators into one calm local reader completely flips the power dynamic.", zh: "把你喜欢的播客、YouTube 频道和独立创作者拉进一个安静的本地阅读器，会彻底扭转注意力的主导权。" },
+          { id: 204, start: 76, end: 108, orig: "Suddenly you are no longer scrolling endlessly; you choose what matters, skim the chapter timeline, listen deeply, and keep permanent notes.", zh: "突然之间，你不再无休止地刷屏；你主动挑选重要内容，扫一眼章节时间线，深度聆听，并留下属于自己的永久笔记。" },
+          { id: 205, start: 108, end: 150, orig: "Great desktop software honors keyboard shortcuts, fast search, and plain Markdown files that you will still be able to read thirty years from now.", zh: "伟大的桌面软件尊重键盘快捷键、瞬时搜索，以及三十年后你依然能打开阅读的纯文本 Markdown 文件。" }
+        ],
+        guide: {
+          tldr: "本期播客围绕「安静软件（Calm Software）」设计哲学展开，讨论如何通过本地聚合、无算法干扰的订阅流和纯文本 Markdown 沉淀，夺回个人注意力主权。",
+          timeline: [
+            { start: 0, title: "安静的图书馆 vs 喧闹的赌场", summary: "对比好工具与注意力收割型平台的本质区别。" },
+            { start: 48, title: "用本地聚合器扭转主导权", summary: "跨平台收敛优质订阅源，脱离推荐流绑架。" },
+            { start: 108, title: "三十年后依然可读的知识资产", summary: "键盘优先、本地搜索与 Markdown 开放格式的重要性。" }
+          ],
+          takeaways: [
+            "好的阅读与收听工具应该克制视觉噪音，把画布还给内容本身。",
+            "先看时间线再决定深听，能把长播客的信息获取效率提升 3 倍以上。",
+            "笔记导出为标准 Markdown，确保个人知识库不受任何单一软件锁定。"
+          ],
+          highlights: [
+            { start: 48, end: 76, reason: "关于「本地聚合器如何夺回注意力主权」的核心论述" }
+          ]
+        },
+        chat: []
+      },
+      {
+        id: "ep-xyz-1",
+        subId: "sub-xyz",
+        platform: "xiaoyuzhou",
+        channel: "科技早知道",
+        title: "S10E14 | 用 AI 写一个属于自己的 Mac 软件：从 PRD 到独立发布",
+        date: "2 天前",
+        durationSec: 135,
+        positionSec: 0,
+        mediaType: "audio",
+        language: "zh",
+        hasOfficialSub: true,
+        isBilingual: false,
+        hasAiGuide: false,
+        isOffline: false,
+        gradient: "linear-gradient(135deg, #0284c7 0%, #0ea5e9 55%, #0c4a6e 100%)",
+        coverLabel: "早知道",
+        pageUrl: "https://www.xiaoyuzhoufm.com/episode/arbok_demo",
+        transcript: [
+          { id: 301, start: 0, end: 25, orig: "欢迎收听科技早知道。今天我们来聊聊「个人定制软件」的新时代：当 AI 承担了大部分编码工作，产品负责人真正该抓什么？", zh: "" },
+          { id: 302, start: 25, end: 60, orig: "第一是克制范围，把 MVP 验收标准写得足够具体；第二是先用可交互原型把界面手感定下来，再让 AI 按模块实现后端。", zh: "" },
+          { id: 303, start: 60, end: 98, orig: "在技术选型上，Tauri 2 结合 React 已经成为独立开发者做 Mac 工具的新宠，安装包只有十几兆，内存占用比 Electron 低得多。", zh: "" },
+          { id: 304, start: 98, end: 135, orig: "最重要的是，先做一款你自己每天都离不开的工具，真实的高频使用本身就是最好的产品打磨。", zh: "" }
+        ],
+        guide: null,
+        chat: []
+      },
+      {
+        id: "ep-bili-2",
+        subId: "sub-limu",
+        platform: "bilibili",
+        channel: "跟李沐学AI",
+        title: "论文精读：长上下文大模型的 KV Cache 压缩与检索架构演进",
+        date: "3 天前",
+        durationSec: 140,
+        positionSec: 0,
+        mediaType: "video",
+        language: "zh",
+        hasOfficialSub: false,
+        isBilingual: false,
+        hasAiGuide: false,
+        isOffline: false,
+        gradient: "linear-gradient(135deg, #334155 0%, #0f766e 60%, #134e4a 100%)",
+        coverLabel: "论文精读",
+        pageUrl: "https://www.bilibili.com/video/BV1ArbokLimu",
+        transcript: [],
+        guide: null,
+        chat: []
+      }
+    ];
+
+    const MOCK_APPLE_PODCASTS = [
+      { name: "Acquired", author: "Ben Gilbert & David Rosenthal", desc: "深度剖析伟大科技公司的商业史诗", subscribed: false },
+      { name: "纵横四海", author: "Melody", desc: "高密度好书精读与认知框架探讨", subscribed: false },
+      { name: "Huberman Lab", author: "Andrew Huberman", desc: "神经科学与可落地的日常健康工具", subscribed: false },
+      { name: "硅谷101", author: "泓君 Jane", desc: "一线硅谷科技趋势与深度人物访谈", subscribed: false }
+    ];
+
+    /* =====================================================================
+       Application State
+       ===================================================================== */
+    const state = {
+      theme: "light",
+      sidebarCollapsed: false,
+      activeNav: "inbox",          // 'inbox' | 'continue' | 'notes' | 'offline' | subId
+      platformFilter: "all",       // 'all' | 'podcast' | 'youtube' | 'bilibili'
+      listSearch: "",
+      viewMode: "list",            // 'list' | 'player'
+      currentEpId: "ep-yt-1",      // active episode (shown in mini-player when in list view)
+      isPlaying: false,
+      playbackRate: 1.0,
+      audioOnlyOverride: false,    // for video episodes toggled to audio-only
+      videoQuality: "1080P",
+      rightTab: "subtitles",       // 'subtitles' | 'guide' | 'chat' | 'notes'
+      subtitleMode: "bilingual",   // 'bilingual' | 'zh' | 'orig'
+      subSearch: "",
+      autoScroll: true,
+      userScrolledAway: false,
+      editingNoteSegId: null,
+      settingsTab: "general",
+      biliLoggedIn: false,
+      asrEngine: "cloud",          // 'cloud' | 'local'
+      notes: [
+        {
+          id: "note-1",
+          epId: "ep-yt-1",
+          segId: 3,
+          ts: 29,
+          quote: "把大模型的上下文窗口想象成传统操作系统的内存，而你本地的 SQLite 数据库就是硬盘。",
+          body: "Arbok 的 AI 问答模块正好可以借鉴这个架构：全量字幕存 SQLite，提问时精准装配相关片段进上下文。"
+        }
+      ],
+      playTimer: null,
+      splitWidthPct: 47
+    };
+
+    /* =====================================================================
+       Utility Helpers
+       ===================================================================== */
+    function formatTime(sec) {
+      sec = Math.max(0, Math.floor(sec || 0));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    function platformMeta(p) {
+      const map = {
+        podcast: { label: "播客", cls: "plat-podcast", dot: "dot-podcast" },
+        xiaoyuzhou: { label: "小宇宙", cls: "plat-xiaoyuzhou", dot: "dot-xiaoyuzhou" },
+        youtube: { label: "YouTube", cls: "plat-youtube", dot: "dot-youtube" },
+        bilibili: { label: "B站", cls: "plat-bilibili", dot: "dot-bilibili" }
+      };
+      return map[p] || map.podcast;
+    }
+
+    function getCurrentEp() {
+      return EPISODES.find(e => e.id === state.currentEpId) || EPISODES[0];
+    }
+
+    function getActiveSegment(ep) {
+      if (!ep || !ep.transcript.length) return null;
+      const t = ep.positionSec;
+      for (let i = ep.transcript.length - 1; i >= 0; i--) {
+        if (t >= ep.transcript[i].start) return ep.transcript[i];
+      }
+      return ep.transcript[0];
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove("show"), 2300);
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function highlightSearch(text, query) {
+      const safe = escapeHtml(text);
+      if (!query.trim()) return safe;
+      const re = new RegExp(`(${query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+      return safe.replace(re, '<mark class="mark-highlight">$1</mark>');
+    }
+
+    /* =====================================================================
+       Playback Simulation Engine
+       ===================================================================== */
+    function startPlayTimer() {
+      stopPlayTimer();
+      state.playTimer = setInterval(() => {
+        if (!state.isPlaying) return;
+        const ep = getCurrentEp();
+        if (!ep) return;
+        ep.positionSec += 0.5 * state.playbackRate;
+        if (ep.positionSec >= ep.durationSec) {
+          ep.positionSec = ep.durationSec;
+          state.isPlaying = false;
+          stopPlayTimer();
+          showToast("本集已播放完毕");
+          renderAll();
+          return;
+        }
+        updateLivePlaybackUI();
+      }, 500);
+    }
+
+    function stopPlayTimer() {
+      if (state.playTimer) {
+        clearInterval(state.playTimer);
+        state.playTimer = null;
+      }
+    }
+
+    function togglePlay() {
+      state.isPlaying = !state.isPlaying;
+      if (state.isPlaying) {
+        const ep = getCurrentEp();
+        if (ep.positionSec >= ep.durationSec) ep.positionSec = 0;
+        startPlayTimer();
+      } else {
+        stopPlayTimer();
+      }
+      renderAll();
+    }
+
+    function seekTo(sec, autoPlay = true) {
+      const ep = getCurrentEp();
+      if (!ep) return;
+      ep.positionSec = Math.max(0, Math.min(ep.durationSec, sec));
+      if (autoPlay && !state.isPlaying) {
+        state.isPlaying = true;
+        startPlayTimer();
+      }
+      renderAll();
+      scrollActiveSubtitleIntoView();
+    }
+
+    function skipBy(delta) {
+      const ep = getCurrentEp();
+      if (!ep) return;
+      seekTo(ep.positionSec + delta, state.isPlaying);
+    }
+
+    function cycleSpeed(dir = 1) {
+      const speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
+      let idx = speeds.indexOf(state.playbackRate);
+      if (idx === -1) idx = 1;
+      idx = (idx + dir + speeds.length) % speeds.length;
+      state.playbackRate = speeds[idx];
+      showToast(`播放倍速：${state.playbackRate}x`);
+      renderAll();
+    }
+
+    function updateLivePlaybackUI() {
+      const ep = getCurrentEp();
+      if (!ep) return;
+      const pct = Math.min(100, (ep.positionSec / ep.durationSec) * 100);
+      const activeSeg = getActiveSegment(ep);
+
+      // Update scrubber & times without full DOM rebuild
+      const fill = document.getElementById("playerScrubberFill");
+      const curT = document.getElementById("playerCurTime");
+      if (fill) fill.style.width = `${pct}%`;
+      if (curT) curT.textContent = formatTime(ep.positionSec);
+
+      const miniFill = document.getElementById("miniScrubberFill");
+      const miniCur = document.getElementById("miniCurTime");
+      if (miniFill) miniFill.style.width = `${pct}%`;
+      if (miniCur) miniCur.textContent = formatTime(ep.positionSec);
+
+      // Video overlay subtitle
+      const overlayOrig = document.getElementById("videoOverlayOrig");
+      const overlayZh = document.getElementById("videoOverlayZh");
+      if (overlayOrig && activeSeg) {
+        overlayOrig.textContent = activeSeg.zh && state.subtitleMode === "zh" ? activeSeg.zh : activeSeg.orig;
+        if (overlayZh) {
+          overlayZh.textContent = (activeSeg.zh && state.subtitleMode === "bilingual") ? activeSeg.zh : "";
+        }
+      }
+
+      // Highlight active subtitle row
+      if (activeSeg && state.viewMode === "player" && state.rightTab === "subtitles") {
+        const rows = document.querySelectorAll(".subtitle-row");
+        let changed = false;
+        rows.forEach(r => {
+          const isAct = Number(r.dataset.segId) === activeSeg.id;
+          if (isAct && !r.classList.contains("active")) changed = true;
+          r.classList.toggle("active", isAct);
+        });
+        if (changed && state.autoScroll && !state.userScrolledAway) {
+          scrollActiveSubtitleIntoView();
+        }
+      }
+    }
+
+    function scrollActiveSubtitleIntoView() {
+      setTimeout(() => {
+        const activeRow = document.querySelector(".subtitle-row.active");
+        if (activeRow) {
+          activeRow.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 40);
+    }
+
+    /* =====================================================================
+       Render: Sidebar
+       ===================================================================== */
+    function renderSidebar() {
+      const continueCount = EPISODES.filter(e => e.positionSec > 0 && e.positionSec < e.durationSec).length;
+      const offlineCount = EPISODES.filter(e => e.isOffline).length;
+
+      const primaryItems = [
+        { id: "inbox", label: "最新更新", count: EPISODES.length, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>` },
+        { id: "continue", label: "继续播放", count: continueCount, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>` },
+        { id: "notes", label: "收藏与笔记", count: state.notes.length, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>` },
+        { id: "offline", label: "离线下载", count: offlineCount, icon: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` }
+      ];
+
+      let html = primaryItems.map(item => `
+        <button class="nav-item ${state.activeNav === item.id && state.viewMode === "list" ? "active" : ""}" onclick="selectNav('${item.id}')">
+          ${item.icon}
+          <span class="nav-title">${item.label}</span>
+          ${item.count > 0 ? `<span class="nav-badge">${item.count}</span>` : ""}
+        </button>
+      `).join("");
+
+      html += `<div class="nav-section-label"><span>我的订阅</span><span>${SUBSCRIPTIONS.length}</span></div>`;
+
+      html += SUBSCRIPTIONS.map(sub => {
+        const pm = platformMeta(sub.platform);
+        const cnt = EPISODES.filter(e => e.subId === sub.id).length;
+        return `
+          <button class="nav-item ${state.activeNav === sub.id && state.viewMode === "list" ? "active" : ""}" onclick="selectNav('${sub.id}')">
+            <span class="sub-dot ${pm.dot}"></span>
+            <span class="nav-title">${escapeHtml(sub.name)}</span>
+            <span class="nav-badge">${cnt}</span>
+          </button>
+        `;
+      }).join("");
+
+      document.getElementById("sidebarNav").innerHTML = html;
+      document.getElementById("sidebar").classList.toggle("collapsed", state.sidebarCollapsed);
+    }
+
+    function selectNav(navId) {
+      state.activeNav = navId;
+      state.viewMode = "list";
+      renderAll();
+    }
+
+    /* =====================================================================
+       Render: Main Area (List View vs Immersive Player)
+       ===================================================================== */
+    function renderMain() {
+      const main = document.getElementById("mainArea");
+      if (state.viewMode === "player") {
+        main.innerHTML = renderPlayerView();
+        bindSplitResizer();
+        bindTranscriptScrollDetect();
+      } else {
+        main.innerHTML = renderListView();
+      }
+    }
+
+    function getFilteredEpisodes() {
+      let list = [...EPISODES];
+      if (state.activeNav === "continue") {
+        list = list.filter(e => e.positionSec > 0 && e.positionSec < e.durationSec);
+      } else if (state.activeNav === "offline") {
+        list = list.filter(e => e.isOffline);
+      } else if (state.activeNav !== "inbox" && state.activeNav !== "notes") {
+        list = list.filter(e => e.subId === state.activeNav);
+      }
+
+      if (state.platformFilter === "podcast") {
+        list = list.filter(e => e.platform === "podcast" || e.platform === "xiaoyuzhou");
+      } else if (state.platformFilter !== "all") {
+        list = list.filter(e => e.platform === state.platformFilter);
+      }
+
+      if (state.listSearch.trim()) {
+        const q = state.listSearch.trim().toLowerCase();
+        list = list.filter(e => e.title.toLowerCase().includes(q) || e.channel.toLowerCase().includes(q));
+      }
+      return list;
+    }
+
+    function renderListView() {
+      const navTitles = {
+        inbox: "最新更新",
+        continue: "继续播放",
+        notes: "收藏与笔记",
+        offline: "离线下载"
+      };
+      const subObj = SUBSCRIPTIONS.find(s => s.id === state.activeNav);
+      const title = subObj ? subObj.name : (navTitles[state.activeNav] || "最新更新");
+
+      const expandBtn = state.sidebarCollapsed
+        ? `<button class="icon-btn" onclick="toggleSidebar()" title="展开侧栏"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="3" x2="9" y2="21"/></svg></button>`
+        : "";
+
+      // Global Notes View
+      if (state.activeNav === "notes") {
+        const notesHtml = state.notes.length
+          ? state.notes.map(n => {
+              const ep = EPISODES.find(e => e.id === n.epId);
+              return `
+                <div class="note-card" style="cursor:pointer;" onclick="openEpisodeAt('${n.epId}', ${n.ts})">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <span style="font-size:12.5px;font-weight:600;color:var(--text-primary);">${ep ? escapeHtml(ep.title) : "未知单集"}</span>
+                    <span class="ts-pill">${formatTime(n.ts)}</span>
+                  </div>
+                  <div class="note-quote">${escapeHtml(n.quote)}</div>
+                  <div class="note-body">${escapeHtml(n.body)}</div>
+                </div>
+              `;
+            }).join("")
+          : `<div class="asr-empty-card"><h3>还没有笔记</h3><p>在任意单集的字幕行悬停点击「记笔记」，你的批注和原句会自动汇总到这里。</p></div>`;
+
+        return `
+          <header class="list-header">
+            <div class="list-header-left">${expandBtn}<h1 class="view-title">${title}</h1></div>
+            <div class="list-header-right">
+              <button class="btn-subtle" onclick="openExportModal()">导出当前单集 Markdown</button>
+            </div>
+          </header>
+          <div class="list-content"><div class="episode-list">${notesHtml}</div></div>
+        `;
+      }
+
+      const eps = getFilteredEpisodes();
+      const cardsHtml = eps.length ? eps.map(ep => {
+        const pm = platformMeta(ep.platform);
+        const pct = Math.round((ep.positionSec / ep.durationSec) * 100);
+        const isCurrent = ep.id === state.currentEpId;
+        const isAudio = ep.mediaType === "audio";
+        return `
+          <article class="episode-card ${isCurrent ? "is-playing" : ""}" onclick="openEpisode('${ep.id}')">
+            <div class="ep-thumb ${isAudio ? "is-square" : ""}" style="background:${ep.gradient}">
+              <span style="font-size:11px;font-weight:700;letter-spacing:0.04em;opacity:0.9;">${ep.coverLabel}</span>
+              <div class="ep-thumb-play">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="white"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+              </div>
+              <span class="ep-thumb-duration">${formatTime(ep.durationSec)}</span>
+            </div>
+            <div class="ep-meta">
+              <div class="ep-top-row">
+                <span class="plat-tag ${pm.cls}">${pm.label}</span>
+                <span class="ep-channel">${escapeHtml(ep.channel)}</span>
+                <span class="ep-date">· ${ep.date}</span>
+              </div>
+              <div class="ep-title">${escapeHtml(ep.title)}</div>
+              <div class="ep-bottom-row">
+                <div class="ep-badges">
+                  ${ep.isBilingual ? `<span class="status-chip good">双语字幕</span>` : (ep.hasOfficialSub ? `<span class="status-chip good">官方字幕</span>` : `<span class="status-chip warn">待 ASR 转写</span>`)}
+                  ${ep.hasAiGuide ? `<span class="status-chip ai">AI 导读</span>` : ""}
+                  ${ep.isOffline ? `<span class="status-chip">已离线</span>` : ""}
+                </div>
+                ${pct > 0 ? `
+                  <div class="ep-progress-wrap">
+                    <div class="ep-progress-track"><div class="ep-progress-fill" style="width:${pct}%"></div></div>
+                    <span class="ep-progress-text">${pct}%</span>
+                  </div>
+                ` : `<span style="font-size:11.5px;color:var(--text-tertiary);">未播放</span>`}
+              </div>
+            </div>
+          </article>
+        `;
+      }).join("") : `
+        <div class="asr-empty-card">
+          <h3>没有匹配的内容</h3>
+          <p>尝试切换平台筛选标签，或点击左上角「添加链接 / 订阅」导入新内容。</p>
+        </div>
+      `;
+
+      return `
+        <header class="list-header">
+          <div class="list-header-left">
+            ${expandBtn}
+            <h1 class="view-title">${escapeHtml(title)}</h1>
+            ${state.activeNav === "inbox" ? `
+              <div class="filter-pills">
+                <button class="filter-pill ${state.platformFilter === "all" ? "active" : ""}" onclick="setPlatformFilter('all')">全部</button>
+                <button class="filter-pill ${state.platformFilter === "podcast" ? "active" : ""}" onclick="setPlatformFilter('podcast')">播客</button>
+                <button class="filter-pill ${state.platformFilter === "youtube" ? "active" : ""}" onclick="setPlatformFilter('youtube')">YouTube</button>
+                <button class="filter-pill ${state.platformFilter === "bilibili" ? "active" : ""}" onclick="setPlatformFilter('bilibili')">B站</button>
+              </div>
+            ` : ""}
+          </div>
+          <div class="list-header-right">
+            <div class="search-box">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input class="search-input" value="${escapeHtml(state.listSearch)}" placeholder="搜索单集或频道..." oninput="updateListSearch(this.value)" />
+            </div>
+            <button class="btn-subtle" id="btnRefreshFeed" onclick="simulateRefresh()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <span>刷新</span>
+            </button>
+          </div>
+        </header>
+        <div class="list-content">
+          <div class="episode-list">${cardsHtml}</div>
+        </div>
+      `;
+    }
+
+    function renderPlayerView() {
+      const ep = getCurrentEp();
+      const pm = platformMeta(ep.platform);
+      const pct = Math.min(100, (ep.positionSec / ep.durationSec) * 100);
+      const activeSeg = getActiveSegment(ep);
+      const showVideo = ep.mediaType === "video" && !state.audioOnlyOverride;
+      const epNotes = state.notes.filter(n => n.epId === ep.id);
+
+      const expandBtn = state.sidebarCollapsed
+        ? `<button class="icon-btn" onclick="toggleSidebar()" title="展开侧栏"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="3" x2="9" y2="21"/></svg></button>`
+        : "";
+
+      const mediaStageHtml = showVideo ? `
+        <div class="media-stage-video ${state.isPlaying ? "playing" : ""}" style="background:${ep.gradient};">
+          <div class="video-grid-pattern"></div>
+          <div class="video-top-overlay">
+            <span class="video-badge">
+              <span class="live-dot"></span>
+              <span>Rust 本地代理直连 · ${state.videoQuality} 无广告</span>
+            </span>
+            <button class="video-badge" style="cursor:pointer;" onclick="toggleAudioOnly()" title="快捷键 A">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+              <span>切纯音频</span>
+            </button>
+          </div>
+          <div class="video-center-visual">
+            <div style="font-size:20px;font-weight:700;letter-spacing:-0.02em;opacity:0.95;">${ep.coverLabel}</div>
+            <div style="font-size:12px;opacity:0.78;">${state.isPlaying ? "正在播放中 · 点击右侧字幕可毫秒级跳转" : "已暂停 · 按 Space 开始播放"}</div>
+            <div class="eq-bars">
+              <span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span>
+            </div>
+          </div>
+          <div class="video-caption-overlay" style="${activeSeg ? "" : "opacity:0;"}">
+            <div id="videoOverlayOrig">${activeSeg ? escapeHtml(activeSeg.zh && state.subtitleMode === "zh" ? activeSeg.zh : activeSeg.orig) : ""}</div>
+            <div class="video-caption-sub" id="videoOverlayZh">${activeSeg && activeSeg.zh && state.subtitleMode === "bilingual" ? escapeHtml(activeSeg.zh) : ""}</div>
+          </div>
+        </div>
+      ` : `
+        <div class="media-stage-audio">
+          <div class="audio-cover-box ${state.isPlaying ? "playing" : ""}" style="background:${ep.gradient};">
+            <div class="video-grid-pattern"></div>
+            <div style="position:relative;z-index:2;">
+              <div style="font-size:11px;opacity:0.75;letter-spacing:0.08em;margin-bottom:6px;">${ep.mediaType === "video" ? "纯音频模式" : pm.label.toUpperCase()}</div>
+              <div style="font-size:22px;font-weight:750;letter-spacing:-0.02em;">${ep.coverLabel}</div>
+              <div class="eq-bars" style="justify-content:center;">
+                <span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span><span class="eq-bar"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const playIconSvg = state.isPlaying
+        ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
+        : `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="margin-left:2px;"><polygon points="6 4 20 12 6 20 6 4"/></svg>`;
+
+      return `
+        <div class="player-view">
+          <!-- LEFT PANE -->
+          <section class="split-left" id="splitLeft" style="width:${state.splitWidthPct}%;">
+            <div class="pane-topbar">
+              <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+                ${expandBtn}
+                <button class="back-btn" onclick="backToList()">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                  <span>返回</span>
+                </button>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="plat-tag ${pm.cls}">${pm.label}</span>
+                <span style="font-size:12.5px;color:var(--text-secondary);font-weight:500;">${escapeHtml(ep.channel)}</span>
+              </div>
+            </div>
+
+            <div class="left-player-body">
+              ${mediaStageHtml}
+
+              <div class="player-ep-info">
+                <h1 class="player-ep-title">${escapeHtml(ep.title)}</h1>
+                <div class="player-ep-sub">
+                  <span>${ep.date}</span>
+                  <span>·</span>
+                  <span class="tabular">${formatTime(ep.durationSec)}</span>
+                  <span>·</span>
+                  <button style="color:var(--accent);font-size:12.5px;" onclick="showToast('已复制原始链接：${ep.pageUrl}')">复制原链接</button>
+                </div>
+              </div>
+
+              <div class="scrubber-block">
+                <div class="scrubber-track" id="playerScrubber" onclick="handleScrubClick(event, this)">
+                  <div class="scrubber-fill" id="playerScrubberFill" style="width:${pct}%;">
+                    <div class="scrubber-thumb"></div>
+                  </div>
+                </div>
+                <div class="scrubber-times">
+                  <span id="playerCurTime">${formatTime(ep.positionSec)}</span>
+                  <span>${formatTime(ep.durationSec)}</span>
+                </div>
+              </div>
+
+              <div class="transport-row">
+                <button class="tool-pill tabular" onclick="cycleSpeed(1)" title="快捷键 [ / ]">${state.playbackRate}x</button>
+                <div class="transport-center">
+                  <button class="btn-skip" onclick="skipBy(-15)" title="快退 15 秒">↺15</button>
+                  <button class="btn-play-main" onclick="togglePlay()" title="播放 / 暂停 (Space)">${playIconSvg}</button>
+                  <button class="btn-skip" onclick="skipBy(15)" title="快进 15 秒">15↻</button>
+                </div>
+                <button class="tool-pill ${ep.isOffline ? "active" : ""}" onclick="toggleOffline('${ep.id}')">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <span>${ep.isOffline ? "已离线" : "下载"}</span>
+                </button>
+              </div>
+
+              <div class="player-tools-row">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  ${ep.mediaType === "video" ? `
+                    <button class="tool-pill ${state.audioOnlyOverride ? "active" : ""}" onclick="toggleAudioOnly()" title="快捷键 A">
+                      <span>${state.audioOnlyOverride ? "切回视频" : "纯音频模式"}</span>
+                    </button>
+                    <button class="tool-pill" onclick="cycleQuality()">${state.videoQuality}</button>
+                  ` : `
+                    <span class="status-chip">音频流 · 断网续播就绪</span>
+                  `}
+                </div>
+                <span style="font-size:11.5px;color:var(--text-tertiary);">Space 播放 · C 切双语 · ⌘F 搜字幕</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- DRAGGABLE RESIZER -->
+          <div class="split-resizer" id="splitResizer" title="拖动调整左右分栏宽度"></div>
+
+          <!-- RIGHT PANE -->
+          <section class="split-right">
+            <div class="pane-topbar">
+              <div class="segmented-tabs">
+                <button class="seg-tab ${state.rightTab === "subtitles" ? "active" : ""}" onclick="setRightTab('subtitles')">字幕</button>
+                <button class="seg-tab ${state.rightTab === "guide" ? "active" : ""}" onclick="setRightTab('guide')">AI 导读</button>
+                <button class="seg-tab ${state.rightTab === "chat" ? "active" : ""}" onclick="setRightTab('chat')">AI 问答</button>
+                <button class="seg-tab ${state.rightTab === "notes" ? "active" : ""}" onclick="setRightTab('notes')">笔记${epNotes.length ? ` (${epNotes.length})` : ""}</button>
+              </div>
+              <button class="btn-subtle" onclick="openExportModal()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>导出 MD</span>
+              </button>
+            </div>
+
+            ${renderRightTabContent(ep, epNotes)}
+          </section>
+        </div>
+      `;
+    }
+
+    function renderRightTabContent(ep, epNotes) {
+      /* --- TAB 1: SUBTITLES --- */
+      if (state.rightTab === "subtitles") {
+        if (!ep.transcript.length) {
+          return `
+            <div class="right-panel-scroll">
+              <div class="asr-empty-card">
+                <h3>该单集暂无官方字幕</h3>
+                <p>Arbok 检测到当前 B站视频没有公开 CC/AI 字幕。你可以使用已配置的 <strong>${state.asrEngine === "cloud" ? "云端 ASR（硅基流动 SenseVoice）" : "本地离线 ASR（Qwen3-ASR 0.6B）"}</strong> 自动生成带时间戳文稿。</p>
+                <div style="display:flex;justify-content:center;gap:8px;">
+                  <button class="btn-accent" onclick="simulateAsrTranscription('${ep.id}')">开始转写字幕</button>
+                  <button class="btn-subtle" onclick="openSettings('bili')">去登录 B站解锁 AI 字幕</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        const activeSeg = getActiveSegment(ep);
+        const modeLabels = { bilingual: "双语", zh: "纯中文", orig: "纯原文" };
+        const canBilingual = ep.language !== "zh";
+
+        const rowsHtml = ep.transcript.map(seg => {
+          const isAct = activeSeg && activeSeg.id === seg.id;
+          const segNote = state.notes.find(n => n.epId === ep.id && n.segId === seg.id);
+          const isEditing = state.editingNoteSegId === seg.id;
+
+          let textBlock = "";
+          if (!canBilingual || !seg.zh) {
+            textBlock = `<div class="sub-orig">${highlightSearch(seg.orig, state.subSearch)}</div>`;
+          } else if (state.subtitleMode === "bilingual") {
+            textBlock = `
+              <div class="sub-orig">${highlightSearch(seg.orig, state.subSearch)}</div>
+              <div class="sub-trans">${highlightSearch(seg.zh, state.subSearch)}</div>
+            `;
+          } else if (state.subtitleMode === "zh") {
+            textBlock = `<div class="sub-trans primary-zh">${highlightSearch(seg.zh, state.subSearch)}</div>`;
+          } else {
+            textBlock = `<div class="sub-orig">${highlightSearch(seg.orig, state.subSearch)}</div>`;
+          }
+
+          return `
+            <div class="subtitle-row ${isAct ? "active" : ""} ${segNote ? "has-note" : ""}" data-seg-id="${seg.id}" onclick="seekTo(${seg.start}, true)">
+              <div class="sub-ts">${formatTime(seg.start)}</div>
+              <div class="sub-texts">
+                ${textBlock}
+                ${segNote && !isEditing ? `<div class="inline-note-chip"><strong>笔记：</strong>${escapeHtml(segNote.body)}</div>` : ""}
+                ${isEditing ? `
+                  <div class="inline-note-editor" onclick="event.stopPropagation()">
+                    <textarea id="noteTextarea" placeholder="写下你对这一句的想法或要点...">${segNote ? escapeHtml(segNote.body) : ""}</textarea>
+                    <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:6px;">
+                      <button class="btn-subtle" onclick="cancelNoteEdit()">取消</button>
+                      <button class="btn-accent" style="height:28px;font-size:12px;" onclick="saveNote('${ep.id}', ${seg.id})">保存笔记</button>
+                    </div>
+                  </div>
+                ` : ""}
+              </div>
+              <div class="sub-actions" onclick="event.stopPropagation()">
+                <button class="sub-micro-btn" onclick="startNoteEdit(${seg.id})">⭐ 记笔记</button>
+                <button class="sub-micro-btn" onclick="copySegmentText('${ep.id}', ${seg.id})">复制</button>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        return `
+          <div class="sub-toolbar">
+            <div class="sub-toolbar-group">
+              ${canBilingual ? `<button class="tool-pill active" onclick="cycleSubtitleMode()" title="快捷键 C">显示：${modeLabels[state.subtitleMode]}</button>` : `<span class="status-chip">中文原文</span>`}
+              <button class="tool-pill ${state.autoScroll ? "active" : ""}" onclick="toggleAutoScroll()">自动跟随：${state.autoScroll ? "开" : "关"}</button>
+            </div>
+            <div class="search-box">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input class="search-input" id="subSearchInput" style="width:175px;" value="${escapeHtml(state.subSearch)}" placeholder="搜当前文稿 (⌘F)..." oninput="updateSubSearch(this.value)" />
+            </div>
+          </div>
+          <div class="right-panel-scroll" id="transcriptScroll">
+            ${rowsHtml}
+            ${state.userScrolledAway ? `<button class="jump-current-fab" onclick="jumpBackToActive()">↓ 回到当前播放句</button>` : ""}
+          </div>
+        `;
+      }
+
+      /* --- TAB 2: AI GUIDE --- */
+      if (state.rightTab === "guide") {
+        if (!ep.guide) {
+          return `
+            <div class="right-panel-scroll">
+              <div class="asr-empty-card">
+                <h3>尚未生成 AI 导读</h3>
+                <p>Arbok 将基于完整字幕调用你配置的模型（当前：DeepSeek-V3），自动提炼一句话总结、章节时间线、核心观点和精选必听片段。</p>
+                <button class="btn-accent" onclick="simulateGenerateGuide('${ep.id}')">✨ 一键生成 AI 导读</button>
+              </div>
+            </div>
+          `;
+        }
+        return `
+          <div class="sub-toolbar">
+            <span style="font-size:12px;color:var(--text-tertiary);">模型：DeepSeek-V3 · 已缓存至本地 SQLite</span>
+            <button class="tool-pill" onclick="simulateGenerateGuide('${ep.id}')">重新生成</button>
+          </div>
+          <div class="right-panel-scroll">
+            <div class="guide-section">
+              <div class="guide-section-title">一句话总结</div>
+              <div class="tldr-card">${escapeHtml(ep.guide.tldr)}</div>
+            </div>
+
+            <div class="guide-section">
+              <div class="guide-section-title">章节时间线（点击时间跳转播放）</div>
+              ${ep.guide.timeline.map(item => `
+                <div class="timeline-item" onclick="seekTo(${item.start}, true)">
+                  <span class="ts-pill">${formatTime(item.start)}</span>
+                  <div>
+                    <div style="font-size:13.5px;font-weight:600;color:var(--text-primary);">${escapeHtml(item.title)}</div>
+                    <div style="font-size:12.5px;color:var(--text-secondary);margin-top:2px;line-height:1.5;">${escapeHtml(item.summary)}</div>
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+
+            <div class="guide-section">
+              <div class="guide-section-title">核心观点</div>
+              <ul class="takeaway-list">
+                ${ep.guide.takeaways.map(t => `<li>${escapeHtml(t)}</li>`).join("")}
+              </ul>
+            </div>
+
+            <div class="guide-section">
+              <div class="guide-section-title">先听这几段</div>
+              ${ep.guide.highlights.map(h => `
+                <div class="highlight-clip-card" onclick="seekTo(${h.start}, true)">
+                  <div>
+                    <div style="font-size:13px;font-weight:560;color:var(--text-primary);">${escapeHtml(h.reason)}</div>
+                    <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:3px;" class="tabular">${formatTime(h.start)} — ${formatTime(h.end)}</div>
+                  </div>
+                  <span class="ts-pill">▶ 试听</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }
+
+      /* --- TAB 3: AI CHAT --- */
+      if (state.rightTab === "chat") {
+        const msgsHtml = ep.chat.length ? ep.chat.map(m => `
+          <div class="chat-bubble ${m.role}">${formatChatWithTimestamps(m.content)}</div>
+        `).join("") : `
+          <div style="margin:auto;text-align:center;color:var(--text-tertiary);max-width:340px;padding:30px 0;">
+            <div style="font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:6px;">基于本期全量文稿向 AI 提问</div>
+            <div style="font-size:12.5px;line-height:1.6;">AI 的所有回答都会附带可点击的 <code>[MM:SS]</code> 时间戳，点击即可跳转原音频核对原话。</div>
+          </div>
+        `;
+
+        return `
+          <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">${msgsHtml}</div>
+            <div class="quick-prompts">
+              <button class="quick-chip" onclick="sendChatMessage('总结最核心的反直觉观点')">总结最核心的反直觉观点</button>
+              <button class="quick-chip" onclick="sendChatMessage('提取提到的所有技术方案与数据')">提取技术方案与数据</button>
+              <button class="quick-chip" onclick="sendChatMessage('用三句话给非技术朋友解释本期内容')">三句话给外行解释</button>
+            </div>
+            <div class="chat-input-bar">
+              <input class="chat-input" id="chatInput" placeholder="输入关于本期的任何问题，回车发送..." onkeydown="if(event.key==='Enter') sendChatMessage()" />
+              <button class="btn-accent" onclick="sendChatMessage()">发送</button>
+            </div>
+          </div>
+        `;
+      }
+
+      /* --- TAB 4: NOTES --- */
+      return `
+        <div class="right-panel-scroll">
+          ${epNotes.length ? epNotes.map(n => `
+            <div class="note-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span class="ts-pill" onclick="seekTo(${n.ts}, true)">▶ ${formatTime(n.ts)}</span>
+                <button class="sub-micro-btn" onclick="deleteNote('${n.id}')">删除</button>
+              </div>
+              <div class="note-quote">${escapeHtml(n.quote)}</div>
+              <div class="note-body">${escapeHtml(n.body)}</div>
+            </div>
+          `).join("") : `
+            <div class="asr-empty-card">
+              <h3>本期还没有笔记</h3>
+              <p>切回「字幕」标签页，将鼠标悬停在任意精彩句子上点击「⭐ 记笔记」，即可保存批注并一键导出到 Obsidian / Notion。</p>
+              <button class="btn-subtle" onclick="setRightTab('subtitles')">返回字幕区</button>
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function formatChatWithTimestamps(text) {
+      const safe = escapeHtml(text)
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\n/g, "<br/>");
+      return safe.replace(/\[(\d{2}):(\d{2})\]/g, (_, m, s) => {
+        const sec = Number(m) * 60 + Number(s);
+        return `<span class="ts-pill" style="margin:0 2px;padding:1px 6px;" onclick="seekTo(${sec}, true)">▶ ${m}:${s}</span>`;
+      });
+    }
+
+    /* =====================================================================
+       Render: Persistent Bottom Mini-Player
+       ===================================================================== */
+    function renderMiniPlayer() {
+      const el = document.getElementById("miniPlayer");
+      if (state.viewMode === "player") {
+        el.classList.add("hidden");
+        return;
+      }
+      const ep = getCurrentEp();
+      if (!ep) {
+        el.classList.add("hidden");
+        return;
+      }
+      el.classList.remove("hidden");
+      const pct = Math.min(100, (ep.positionSec / ep.durationSec) * 100);
+      const pm = platformMeta(ep.platform);
+      const playSvg = state.isPlaying
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="margin-left:1.5px;"><polygon points="6 4 20 12 6 20 6 4"/></svg>`;
+
+      el.innerHTML = `
+        <div class="mini-left" onclick="openEpisode('${ep.id}')">
+          <div class="mini-cover" style="background:${ep.gradient};">${ep.coverLabel.slice(0, 3)}</div>
+          <div class="mini-info">
+            <div class="mini-title">${escapeHtml(ep.title)}</div>
+            <div class="mini-sub">${pm.label} · ${escapeHtml(ep.channel)}</div>
+          </div>
+        </div>
+
+        <div class="mini-center">
+          <div class="mini-controls">
+            <button class="btn-skip" style="width:28px;height:28px;" onclick="skipBy(-15)">↺15</button>
+            <button class="mini-play-btn" onclick="togglePlay()">${playSvg}</button>
+            <button class="btn-skip" style="width:28px;height:28px;" onclick="skipBy(15)">15↻</button>
+          </div>
+          <div class="mini-progress-row">
+            <span id="miniCurTime">${formatTime(ep.positionSec)}</span>
+            <div class="scrubber-track" style="flex:1;height:4px;" onclick="handleScrubClick(event, this)">
+              <div class="scrubber-fill" id="miniScrubberFill" style="width:${pct}%;"></div>
+            </div>
+            <span>${formatTime(ep.durationSec)}</span>
+          </div>
+        </div>
+
+        <div class="mini-right">
+          <button class="tool-pill tabular" onclick="cycleSpeed(1)">${state.playbackRate}x</button>
+          <button class="btn-subtle" onclick="openEpisode('${ep.id}')">展开沉浸页 ▲</button>
+        </div>
+      `;
+    }
+
+    function renderAll() {
+      renderSidebar();
+      renderMain();
+      renderMiniPlayer();
+    }
+
+    /* =====================================================================
+       User Interactions & Handlers
+       ===================================================================== */
+    function openEpisode(epId) {
+      const switching = state.currentEpId !== epId;
+      state.currentEpId = epId;
+      state.viewMode = "player";
+      state.audioOnlyOverride = false;
+      state.editingNoteSegId = null;
+      state.userScrolledAway = false;
+      if (switching) {
+        state.rightTab = "subtitles";
+        state.subSearch = "";
+      }
+      renderAll();
+      scrollActiveSubtitleIntoView();
+    }
+
+    function openEpisodeAt(epId, sec) {
+      openEpisode(epId);
+      seekTo(sec, true);
+    }
+
+    function backToList() {
+      state.viewMode = "list";
+      renderAll();
+    }
+
+    function toggleSidebar() {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+      renderAll();
+    }
+
+    function setPlatformFilter(f) {
+      state.platformFilter = f;
+      renderMain();
+    }
+
+    function updateListSearch(val) {
+      state.listSearch = val;
+      renderMain();
+      const inp = document.querySelector(".list-header .search-input");
+      if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
+    }
+
+    function simulateRefresh() {
+      const btn = document.getElementById("btnRefreshFeed");
+      if (btn) btn.querySelector("svg").classList.add("spinner");
+      setTimeout(() => {
+        if (btn) btn.querySelector("svg").classList.remove("spinner");
+        showToast("已刷新 5 个订阅源，全部为最新状态");
+      }, 750);
+    }
+
+    function handleScrubClick(e, trackEl) {
+      const rect = trackEl.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const ep = getCurrentEp();
+      seekTo(ratio * ep.durationSec, state.isPlaying);
+    }
+
+    function toggleAudioOnly() {
+      state.audioOnlyOverride = !state.audioOnlyOverride;
+      showToast(state.audioOnlyOverride ? "已切为纯音频模式（省电/后台听）" : "已切回视频播放模式");
+      renderMain();
+    }
+
+    function cycleQuality() {
+      const qs = ["1080P", "720P", "4K HDR"];
+      state.videoQuality = qs[(qs.indexOf(state.videoQuality) + 1) % qs.length];
+      showToast(`清晰度已切换为 ${state.videoQuality}`);
+      renderMain();
+    }
+
+    function toggleOffline(epId) {
+      const ep = EPISODES.find(e => e.id === epId);
+      if (!ep) return;
+      ep.isOffline = !ep.isOffline;
+      showToast(ep.isOffline ? "已缓存到本地，断网亦可离线收听" : "已移除本地离线文件");
+      renderAll();
+    }
+
+    function setRightTab(tab) {
+      state.rightTab = tab;
+      renderMain();
+      if (tab === "subtitles") scrollActiveSubtitleIntoView();
+    }
+
+    function cycleSubtitleMode() {
+      const modes = ["bilingual", "zh", "orig"];
+      const labels = { bilingual: "双语对照", zh: "纯中文", orig: "纯原文" };
+      state.subtitleMode = modes[(modes.indexOf(state.subtitleMode) + 1) % modes.length];
+      showToast(`字幕模式：${labels[state.subtitleMode]}`);
+      renderMain();
+    }
+
+    function toggleAutoScroll() {
+      state.autoScroll = !state.autoScroll;
+      if (state.autoScroll) state.userScrolledAway = false;
+      renderMain();
+    }
+
+    function updateSubSearch(val) {
+      state.subSearch = val;
+      renderMain();
+      const inp = document.getElementById("subSearchInput");
+      if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
+    }
+
+    function bindTranscriptScrollDetect() {
+      const scroller = document.getElementById("transcriptScroll");
+      if (!scroller) return;
+      scroller.addEventListener("wheel", () => {
+        if (!state.userScrolledAway) {
+          state.userScrolledAway = true;
+          const existing = scroller.querySelector(".jump-current-fab");
+          if (!existing) {
+            const btn = document.createElement("button");
+            btn.className = "jump-current-fab";
+            btn.textContent = "↓ 回到当前播放句";
+            btn.onclick = jumpBackToActive;
+            scroller.appendChild(btn);
+          }
+        }
+      }, { passive: true });
+    }
+
+    function jumpBackToActive() {
+      state.userScrolledAway = false;
+      renderMain();
+      scrollActiveSubtitleIntoView();
+    }
+
+    /* --- Notes --- */
+    function startNoteEdit(segId) {
+      state.editingNoteSegId = segId;
+      renderMain();
+      setTimeout(() => {
+        const ta = document.getElementById("noteTextarea");
+        if (ta) ta.focus();
+      }, 30);
+    }
+
+    function cancelNoteEdit() {
+      state.editingNoteSegId = null;
+      renderMain();
+    }
+
+    function saveNote(epId, segId) {
+      const ta = document.getElementById("noteTextarea");
+      const body = (ta ? ta.value : "").trim();
+      if (!body) {
+        showToast("请输入笔记内容");
+        return;
+      }
+      const ep = EPISODES.find(e => e.id === epId);
+      const seg = ep.transcript.find(s => s.id === segId);
+      const existing = state.notes.find(n => n.epId === epId && n.segId === segId);
+      if (existing) {
+        existing.body = body;
+      } else {
+        state.notes.unshift({
+          id: "note-" + Date.now(),
+          epId,
+          segId,
+          ts: seg.start,
+          quote: seg.zh || seg.orig,
+          body
+        });
+      }
+      state.editingNoteSegId = null;
+      showToast("笔记已保存到 SQLite");
+      renderAll();
+    }
+
+    function deleteNote(noteId) {
+      state.notes = state.notes.filter(n => n.id !== noteId);
+      showToast("已删除笔记");
+      renderAll();
+    }
+
+    function copySegmentText(epId, segId) {
+      const ep = EPISODES.find(e => e.id === epId);
+      const seg = ep.transcript.find(s => s.id === segId);
+      const txt = `[${formatTime(seg.start)}] ${seg.orig}${seg.zh ? "\n" + seg.zh : ""}`;
+      navigator.clipboard?.writeText(txt).catch(() => {});
+      showToast("已复制该句带时间戳文本");
+    }
+
+    /* --- Simulated ASR & AI Guide & AI Chat --- */
+    function simulateAsrTranscription(epId) {
+      const ep = EPISODES.find(e => e.id === epId);
+      showToast(`正在使用 ${state.asrEngine === "cloud" ? "云端 ASR" : "本地 Qwen3-ASR 子进程"} 转写中...`);
+      setTimeout(() => {
+        ep.transcript = [
+          { id: 501, start: 0, end: 26, orig: "大家好，今天我们精读这篇关于长上下文大模型 KV Cache 压缩的核心论文。", zh: "" },
+          { id: 502, start: 26, end: 64, orig: "在推理阶段，序列长度拉到 128K 之后，显存瓶颈几乎全部来自 KV Cache 而非模型权重本身。", zh: "" },
+          { id: 503, start: 64, end: 102, orig: "作者提出了一种按注意力分数动态淘汰冗余 Token 的策略，在精度几乎无损的情况下降低了 60% 显存占用。", zh: "" },
+          { id: 504, start: 102, end: 140, orig: "这也解释了为什么未来在个人 Mac 上也能直接跑起高质量的长文稿分析与播客问答。", zh: "" }
+        ];
+        ep.hasOfficialSub = true;
+        showToast("ASR 转写完成！共生成 4 段精准时间轴字幕");
+        renderAll();
+      }, 1100);
+    }
+
+    function simulateGenerateGuide(epId) {
+      const ep = EPISODES.find(e => e.id === epId);
+      if (!ep.transcript.length) {
+        showToast("请先在字幕页完成语音转写");
+        return;
+      }
+      showToast("正在流式生成 AI 导读...");
+      setTimeout(() => {
+        ep.guide = {
+          tldr: `本集围绕《${ep.title}》展开，提炼了核心工程架构思路与可直接复用的实操建议。`,
+          timeline: ep.transcript.slice(0, 3).map(s => ({
+            start: s.start,
+            title: s.orig.slice(0, 22) + "...",
+            summary: s.zh || s.orig
+          })),
+          takeaways: [
+            "明确最小可行性闭环（MVP）与验收标准，避免过度设计。",
+            "本地优先存储与精准时间戳引用能极大提升长内容复用效率。"
+          ],
+          highlights: [
+            { start: ep.transcript[1]?.start || 0, end: ep.transcript[1]?.end || 30, reason: "核心方法论浓缩片段" }
+          ]
+        };
+        ep.hasAiGuide = true;
+        showToast("AI 导读已生成并缓存");
+        renderAll();
+      }, 850);
+    }
+
+    function sendChatMessage(presetText) {
+      const inp = document.getElementById("chatInput");
+      const q = (presetText || (inp ? inp.value : "")).trim();
+      if (!q) return;
+      const ep = getCurrentEp();
+      ep.chat.push({ role: "user", content: q });
+      if (inp) inp.value = "";
+      renderMain();
+
+      const seg1 = ep.transcript[1] || ep.transcript[0];
+      const seg2 = ep.transcript[Math.min(4, ep.transcript.length - 1)] || seg1;
+      setTimeout(() => {
+        const ts1 = seg1 ? `[${formatTime(seg1.start)}]` : "[00:00]";
+        const ts2 = seg2 ? `[${formatTime(seg2.start)}]` : "[00:30]";
+        ep.chat.push({
+          role: "assistant",
+          content: `结合本期文稿为你整理如下：\n1. 在 ${ts1} 处，主讲人指出了最关键的底层逻辑：${(seg1?.zh || seg1?.orig || "围绕核心痛点拆解系统瓶颈")}\n2. 随后在 ${ts2} 处进一步给出了可落地的实践结论：${(seg2?.zh || seg2?.orig || "推荐采用轻量本地化方案闭环。")}\n\n你可以点击上方蓝色时间戳直接跳到原音频核对原话。`
+        });
+        renderMain();
+        const box = document.getElementById("chatMessages");
+        if (box) box.scrollTop = box.scrollHeight;
+      }, 600);
+    }
+
+    /* --- Draggable Split Pane --- */
+    function bindSplitResizer() {
+      const resizer = document.getElementById("splitResizer");
+      const leftPane = document.getElementById("splitLeft");
+      if (!resizer || !leftPane) return;
+
+      resizer.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        resizer.classList.add("dragging");
+        const container = resizer.parentElement;
+        const rect = container.getBoundingClientRect();
+
+        function onMove(ev) {
+          const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+          state.splitWidthPct = Math.max(32, Math.min(64, pct));
+          leftPane.style.width = `${state.splitWidthPct}%`;
+        }
+        function onUp() {
+          resizer.classList.remove("dragging");
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+        }
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+      });
+    }
+
+    /* =====================================================================
+       Modals: Add Link / Search, Settings, Markdown Export
+       ===================================================================== */
+    function openModal(id) {
+      document.getElementById(id).classList.add("open");
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.remove("open");
+    }
+
+    function switchAddTab(tab) {
+      document.getElementById("addTabUrl").classList.toggle("active", tab === "url");
+      document.getElementById("addTabSearch").classList.toggle("active", tab === "search");
+      document.getElementById("addUrlPane").style.display = tab === "url" ? "block" : "none";
+      document.getElementById("addSearchPane").style.display = tab === "search" ? "block" : "none";
+      document.getElementById("addModalFooter").style.display = tab === "url" ? "flex" : "none";
+      if (tab === "search") renderPodcastSearch("");
+    }
+
+    function detectUrlPlatform(val) {
+      const el = document.getElementById("urlDetectStatus");
+      const v = val.trim().toLowerCase();
+      if (!v) {
+        el.innerHTML = "粘贴任意链接，Arbok 将自动识别平台并提取元数据与字幕。";
+        return;
+      }
+      if (v.includes("youtube.com") || v.includes("youtu.be")) {
+        el.innerHTML = `<span class="plat-tag plat-youtube">已识别：YouTube</span> 将通过已配置代理调用 yt-dlp 解析视频流与官方字幕。`;
+      } else if (v.includes("bilibili.com") || v.includes("b23.tv")) {
+        el.innerHTML = `<span class="plat-tag plat-bilibili">已识别：哔哩哔哩 (B站)</span> 将使用本地代理注入 Referer 并尝试拉取高清流与官方 AI 字幕。`;
+      } else if (v.includes("xiaoyuzhoufm.com")) {
+        el.innerHTML = `<span class="plat-tag plat-xiaoyuzhou">已识别：小宇宙</span> 将提取音频直链与节目详情。`;
+      } else if (v.includes("rss") || v.includes("feed") || v.includes(".xml")) {
+        el.innerHTML = `<span class="plat-tag plat-podcast">已识别：播客 RSS</span> 将解析频道最近 20 期节目并加入订阅列表。`;
+      } else {
+        el.innerHTML = "正在识别链接格式，支持 YouTube / B站 / 小宇宙 / 播客 RSS...";
+      }
+    }
+
+    function fillDemoUrl(url) {
+      const inp = document.getElementById("urlInput");
+      inp.value = url;
+      detectUrlPlatform(url);
+      inp.focus();
+    }
+
+    function submitAddUrl() {
+      const val = document.getElementById("urlInput").value.trim();
+      if (!val) { showToast("请先粘贴一个有效链接"); return; }
+      let plat = "podcast", label = "新导入播客", mediaType = "audio", grad = "linear-gradient(135deg, #4338ca, #6366f1)";
+      if (val.includes("youtube") || val.includes("youtu.be")) {
+        plat = "youtube"; label = "新导入 YouTube 视频"; mediaType = "video"; grad = "linear-gradient(135deg, #9f1239, #e11d48)";
+      } else if (val.includes("bilibili") || val.includes("b23")) {
+        plat = "bilibili"; label = "新导入 B站视频"; mediaType = "video"; grad = "linear-gradient(135deg, #db2777, #fb7299)";
+      } else if (val.includes("xiaoyuzhou")) {
+        plat = "xiaoyuzhou"; label = "新导入小宇宙单集"; mediaType = "audio"; grad = "linear-gradient(135deg, #0369a1, #0ea5e9)";
+      }
+
+      const newId = "ep-custom-" + Date.now();
+      EPISODES.unshift({
+        id: newId,
+        subId: null,
+        platform: plat,
+        channel: "单链接导入",
+        title: `${label}（来自 ${val.slice(0, 36)}...）`,
+        date: "刚刚",
+        durationSec: 120,
+        positionSec: 0,
+        mediaType,
+        language: plat === "youtube" ? "en" : "zh",
+        hasOfficialSub: true,
+        isBilingual: plat === "youtube",
+        hasAiGuide: false,
+        isOffline: false,
+        gradient: grad,
+        coverLabel: "NEW",
+        pageUrl: val,
+        transcript: [
+          { id: Date.now(), start: 0, end: 30, orig: "已成功解析链接并载入播放器。点击右侧「AI 导读」可立即生成结构化总结。", zh: plat === "youtube" ? "已成功解析链接并载入播放器，支持双语字幕切换。" : "" }
+        ],
+        guide: null,
+        chat: []
+      });
+
+      document.getElementById("urlInput").value = "";
+      closeModal("modalAdd");
+      showToast("解析成功，已打开沉浸播放页");
+      openEpisode(newId);
+    }
+
+    function renderPodcastSearch(query) {
+      const q = query.trim().toLowerCase();
+      const filtered = MOCK_APPLE_PODCASTS.filter(p => !q || p.name.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q));
+      document.getElementById("podcastSearchResults").innerHTML = filtered.map((p, idx) => `
+        <div class="setting-row" style="margin:0;">
+          <div>
+            <div style="font-size:13.5px;font-weight:600;">${escapeHtml(p.name)} <span style="font-size:11.5px;font-weight:400;color:var(--text-tertiary);">· ${escapeHtml(p.author)}</span></div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">${escapeHtml(p.desc)}</div>
+          </div>
+          <button class="${p.subscribed ? "btn-subtle" : "btn-accent"}" style="height:28px;font-size:12px;" onclick="toggleMockPodcastSub(${idx})">${p.subscribed ? "已订阅" : "+ 订阅"}</button>
+        </div>
+      `).join("");
+    }
+
+    function toggleMockPodcastSub(idx) {
+      const p = MOCK_APPLE_PODCASTS[idx];
+      p.subscribed = !p.subscribed;
+      if (p.subscribed && !SUBSCRIPTIONS.find(s => s.name === p.name)) {
+        SUBSCRIPTIONS.push({ id: "sub-new-" + idx, name: p.name, platform: "podcast", count: 0 });
+      }
+      renderPodcastSearch(document.getElementById("podcastSearchInput").value);
+      renderSidebar();
+      showToast(p.subscribed ? `已订阅播客「${p.name}」` : `已取消订阅「${p.name}」`);
+    }
+
+    /* --- Settings Modal --- */
+    function openSettings(tab = "general") {
+      state.settingsTab = tab;
+      renderSettings();
+      openModal("modalSettings");
+    }
+
+    function renderSettings() {
+      const tabs = [
+        { id: "general", label: "常规与存储" },
+        { id: "network", label: "网络与代理" },
+        { id: "bili", label: "B站账号鉴权" },
+        { id: "llm", label: "AI 模型 (BYOK)" },
+        { id: "asr", label: "语音转写 (ASR)" },
+        { id: "env", label: "环境检测" }
+      ];
+
+      document.getElementById("settingsNav").innerHTML = tabs.map(t => `
+        <button class="nav-item ${state.settingsTab === t.id ? "active" : ""}" onclick="state.settingsTab='${t.id}';renderSettings();">
+          <span class="nav-title">${t.label}</span>
+        </button>
+      `).join("");
+
+      const pane = document.getElementById("settingsPane");
+      if (state.settingsTab === "general") {
+        pane.innerHTML = `
+          <div class="setting-group">
+            <label class="form-label">外观主题</label>
+            <div class="segmented-tabs">
+              <button class="seg-tab ${state.theme === "light" ? "active" : ""}" onclick="setTheme('light')">浅色模式</button>
+              <button class="seg-tab ${state.theme === "dark" ? "active" : ""}" onclick="setTheme('dark')">深色模式</button>
+            </div>
+          </div>
+          <div class="setting-group">
+            <label class="form-label">离线缓存与上限管理</label>
+            <div class="setting-row">
+              <div>
+                <div style="font-size:13px;font-weight:560;">当前缓存占用：412 MB / 5.0 GB 上限</div>
+                <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:2px;">仅自动清理临时缓冲，不删除手动「离线下载」单集</div>
+              </div>
+              <button class="btn-subtle" onclick="showToast('已清理 128 MB 临时流缓存')">清理缓存</button>
+            </div>
+          </div>
+        `;
+      } else if (state.settingsTab === "network") {
+        pane.innerHTML = `
+          <div class="setting-group">
+            <label class="form-label">代理模式（Rust 后端统一接管，解决 YouTube 访问与 CORS）</label>
+            <select class="form-select">
+              <option>跟随 macOS 系统代理（推荐）</option>
+              <option>自定义 HTTP / SOCKS5 代理</option>
+              <option>直连（不使用代理）</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label class="form-label">自定义代理地址</label>
+            <input class="form-input tabular" value="http://127.0.0.1:7890" />
+            <div style="margin-top:10px;">
+              <button class="btn-subtle" onclick="showToast('代理连通测试通过：YouTube 延迟 142ms')">测试 YouTube 连通性</button>
+            </div>
+          </div>
+        `;
+      } else if (state.settingsTab === "bili") {
+        pane.innerHTML = `
+          <div class="setting-group">
+            <label class="form-label">哔哩哔哩登录状态（用于解锁 1080P+ 画质与官方 AI 字幕）</label>
+            <div class="setting-row" style="align-items:flex-start;gap:16px;padding:16px;">
+              <div class="qr-box">
+                ${state.biliLoggedIn ? `
+                  <div style="text-align:center;color:#16a34a;font-weight:600;font-size:13px;">✓ 已登录<br/><span style="font-size:11px;color:#64748b;font-weight:400;">大会员有效</span></div>
+                ` : `
+                  <svg width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="#1d1d1f" stroke-width="1.5">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                    <path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 20h2M20 14h1"/>
+                  </svg>
+                `}
+              </div>
+              <div style="flex:1;">
+                <div style="font-size:13.5px;font-weight:600;">${state.biliLoggedIn ? "已通过 B站扫码登录（凭证已加密存至 macOS 钥匙串）" : "打开哔哩哔哩 App 扫一扫登录"}</div>
+                <p class="form-hint" style="margin-top:6px;">SESSDATA 仅保存在本机 macOS Keychain，绝不上传至任何第三方服务器。</p>
+                <div style="margin-top:12px;display:flex;gap:8px;">
+                  <button class="btn-accent" style="height:30px;font-size:12.5px;" onclick="state.biliLoggedIn=!state.biliLoggedIn;renderSettings();showToast(state.biliLoggedIn?'模拟扫码登录成功！已写入 macOS Keychain':'已退出 B站登录态')">${state.biliLoggedIn ? "退出登录" : "模拟扫码完成"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="setting-group">
+            <label class="form-label">备用方案：手动粘贴 SESSDATA Cookie</label>
+            <input class="form-input tabular" type="password" placeholder="粘贴浏览器中的 SESSDATA 值..." />
+          </div>
+        `;
+      } else if (state.settingsTab === "llm") {
+        pane.innerHTML = `
+          <div class="setting-group">
+            <label class="form-label">默认大模型服务商（BYOK，Key 存 macOS Keychain）</label>
+            <select class="form-select">
+              <option>DeepSeek (deepseek-chat / V3)</option>
+              <option>Google Gemini (gemini-2.5-flash)</option>
+              <option>OpenAI (gpt-4o-mini)</option>
+              <option>Anthropic Claude</option>
+              <option>通义千问 / Kimi / 智谱</option>
+              <option>本地 Ollama (http://127.0.0.1:11434)</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label class="form-label">API Key</label>
+            <input class="form-input tabular" type="password" value="sk-arbok-demo-key-stored-in-keychain" />
+            <div style="margin-top:10px;display:flex;gap:8px;">
+              <button class="btn-subtle" onclick="showToast('连接测试成功 · 响应延迟 310ms')">测试连接</button>
+              <span style="font-size:11.5px;color:var(--status-green);line-height:30px;">🔒 安全托管于系统钥匙串</span>
+            </div>
+          </div>
+        `;
+      } else if (state.settingsTab === "asr") {
+        pane.innerHTML = `
+          <div class="setting-group">
+            <label class="form-label">无字幕内容默认转写引擎</label>
+            <div class="segmented-tabs">
+              <button class="seg-tab ${state.asrEngine === "cloud" ? "active" : ""}" onclick="state.asrEngine='cloud';renderSettings();showToast('已切换为云端 ASR 引擎')">云端 ASR API（快）</button>
+              <button class="seg-tab ${state.asrEngine === "local" ? "active" : ""}" onclick="state.asrEngine='local';renderSettings();showToast('已切换为本地离线 ASR 子进程')">本地离线 ASR（零费用）</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div style="font-size:13px;font-weight:600;">${state.asrEngine === "cloud" ? "硅基流动 FunAudioLLM / SenseVoiceSmall" : "Qwen3-ASR 0.6B（独立子进程隔离）"}</div>
+              <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:2px;">${state.asrEngine === "cloud" ? "约 1 小时音频仅需数秒，支持中英日自动语种检测" : "约 980 MB · 音频不出 Mac 本机 · Metal 加速"}</div>
+            </div>
+            <span class="status-chip good">已就绪</span>
+          </div>
+        `;
+      } else {
+        pane.innerHTML = `
+          <div class="setting-group">
+            <label class="form-label">本机核心依赖检测（优先使用内置 sidecar，自动回退 Homebrew）</label>
+            <div class="setting-row">
+              <div><div style="font-size:13px;font-weight:600;">yt-dlp</div><div class="tabular" style="font-size:11.5px;color:var(--text-tertiary);">/opt/homebrew/bin/yt-dlp · v2026.10.18</div></div>
+              <span class="status-chip good">✓ 正常</span>
+            </div>
+            <div class="setting-row">
+              <div><div style="font-size:13px;font-weight:600;">ffmpeg</div><div class="tabular" style="font-size:11.5px;color:var(--text-tertiary);">/opt/homebrew/bin/ffmpeg · v7.1</div></div>
+              <span class="status-chip good">✓ 正常</span>
+            </div>
+            <div class="setting-row">
+              <div><div style="font-size:13px;font-weight:600;">SQLite 本地库</div><div class="tabular" style="font-size:11.5px;color:var(--text-tertiary);">~/Library/Application Support/Arbok/arbok.db</div></div>
+              <span class="status-chip good">✓ 正常</span>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    /* --- Markdown Export --- */
+    function buildMarkdown(ep) {
+      const epNotes = state.notes.filter(n => n.epId === ep.id);
+      const pm = platformMeta(ep.platform);
+      let md = `---\ntitle: "${ep.title}"\nsource: ${pm.label}\nchannel: "${ep.channel}"\nurl: ${ep.pageUrl}\nduration: "${formatTime(ep.durationSec)}"\ntags: [Arbok, ${pm.label}]\n---\n\n# ${ep.title}\n\n`;
+      if (ep.guide) {
+        md += `## 一句话总结\n> ${ep.guide.tldr}\n\n## 章节时间线\n`;
+        ep.guide.timeline.forEach(t => {
+          md += `- **[${formatTime(t.start)}] ${t.title}**：${t.summary}\n`;
+        });
+        md += `\n## 核心观点\n`;
+        ep.guide.takeaways.forEach(k => { md += `- ${k}\n`; });
+        md += `\n`;
+      }
+      if (epNotes.length) {
+        md += `## 个人笔记与摘录\n`;
+        epNotes.forEach(n => {
+          md += `### [${formatTime(n.ts)}]\n> ${n.quote}\n\n${n.body}\n\n`;
+        });
+      }
+      return md.trim() + "\n";
+    }
+
+    function openExportModal() {
+      const ep = getCurrentEp();
+      document.getElementById("mdPreviewContent").textContent = buildMarkdown(ep);
+      openModal("modalExport");
+    }
+
+    function copyMarkdown() {
+      const txt = document.getElementById("mdPreviewContent").textContent;
+      navigator.clipboard?.writeText(txt).catch(() => {});
+      showToast("已复制 Markdown，可直接粘贴至 Obsidian / Notion");
+      closeModal("modalExport");
+    }
+
+    function downloadMarkdownFile() {
+      const ep = getCurrentEp();
+      const txt = buildMarkdown(ep);
+      const blob = new Blob([txt], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${ep.title.slice(0, 32).replace(/[\\/:*?"<>|]/g, "")}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast("已开始下载 .md 文件");
+    }
+
+    /* =====================================================================
+       Theme & Keyboard Shortcuts
+       ===================================================================== */
+    function setTheme(t) {
+      state.theme = t;
+      document.documentElement.setAttribute("data-theme", t);
+      const icon = document.getElementById("themeIcon");
+      if (icon) {
+        icon.innerHTML = t === "dark"
+          ? `<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>`
+          : `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>`;
+      }
+      if (document.getElementById("modalSettings").classList.contains("open")) {
+        renderSettings();
+      }
+    }
+
+    document.getElementById("btnToggleTheme").onclick = () => setTheme(state.theme === "light" ? "dark" : "light");
+    document.getElementById("btnCollapseSidebar").onclick = toggleSidebar;
+    document.getElementById("btnOpenAdd").onclick = () => { openModal("modalAdd"); setTimeout(() => document.getElementById("urlInput")?.focus(), 40); };
+    document.getElementById("btnOpenSettings").onclick = () => openSettings("general");
+
+    // Backdrop click to close modals
+    document.querySelectorAll(".modal-backdrop").forEach(bd => {
+      bd.addEventListener("click", (e) => {
+        if (e.target === bd) bd.classList.remove("open");
+      });
+    });
+
+    // Global Keyboard Shortcuts (Matching PRD 4.3)
+    window.addEventListener("keydown", (e) => {
+      const tag = document.activeElement?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+      if (e.key === "Escape") {
+        document.querySelectorAll(".modal-backdrop.open").forEach(m => m.classList.remove("open"));
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        openModal("modalAdd");
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        openSettings("general");
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        const subInput = document.getElementById("subSearchInput");
+        const listInput = document.querySelector(".list-header .search-input");
+        if (subInput || listInput) {
+          e.preventDefault();
+          (subInput || listInput).focus();
+        }
+        return;
+      }
+
+      if (inInput) return;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        skipBy(e.shiftKey ? -30 : -10);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        skipBy(e.shiftKey ? 30 : 10);
+      } else if (e.key === "[") {
+        cycleSpeed(-1);
+      } else if (e.key === "]") {
+        cycleSpeed(1);
+      } else if (e.key.toLowerCase() === "c" && state.viewMode === "player") {
+        cycleSubtitleMode();
+      } else if (e.key.toLowerCase() === "a" && state.viewMode === "player") {
+        const ep = getCurrentEp();
+        if (ep.mediaType === "video") toggleAudioOnly();
+      }
+    });
+
+    // Boot
+    renderAll();
+  </script>
+</body>
+</html>

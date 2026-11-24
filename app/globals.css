@@ -1,26 +1,457 @@
+@layer ui-sdk;
 @import "tailwindcss";
+@import "@ui-sdk/core/web.css" layer(components);
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light dark;
+  --ui-radius: 0.5rem;
+  --ui-spacing: 0.25rem;
+  --ui-font-size: 0.8125rem;
+  --ui-line-height: 1.5;
+  --ui-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+  --ui-font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --ui-background: light-dark(#ffffff, #18181b);
+  --ui-foreground: light-dark(#141416, #f4f4f6);
+  --ui-muted: light-dark(#f4f4f6, #27272a);
+  --ui-muted-foreground: light-dark(#52525b, #a1a1aa);
+  --ui-border: light-dark(#e4e4e7, #323238);
+  --ui-input: light-dark(#8e8e98, #6b6b76);
+  --ui-primary: light-dark(#0062cc, #2563eb);
+  --ui-primary-foreground: #ffffff;
+  --ui-destructive: light-dark(#c81e1e, #f87171);
+  --ui-ring: light-dark(rgba(0, 98, 204, 0.28), rgba(96, 165, 250, 0.35));
+  --ui-ring-border: light-dark(#0062cc, #60a5fa);
+
+  --arbok-canvas: light-dark(#faf9f6, #141416);
+  --arbok-sidebar: light-dark(rgba(244, 243, 239, 0.9), rgba(20, 20, 23, 0.94));
+  --arbok-surface: light-dark(#ffffff, #1e1e22);
+  --arbok-elevated: light-dark(#f4f3ef, #26262b);
+  --arbok-hero-btn-bg: light-dark(#18181b, #f4f4f6);
+  --arbok-hero-btn-fg: light-dark(#ffffff, #141416);
+  --arbok-accent-text: light-dark(#005bb8, #60a5fa);
+  --arbok-accent-soft: light-dark(rgba(0, 98, 204, 0.1), rgba(59, 130, 246, 0.18));
+  --arbok-accent-border: light-dark(rgba(0, 98, 204, 0.35), rgba(96, 165, 250, 0.45));
+  --arbok-settings-icon-active: light-dark(#ea580c, #fb923c);
+
+  --plat-podcast-fg: light-dark(#5b21b6, #c4b5fd);
+  --plat-podcast-bg: light-dark(rgba(109, 40, 217, 0.1), rgba(139, 92, 246, 0.2));
+  --plat-youtube-fg: light-dark(#be123c, #fda4af);
+  --plat-youtube-bg: light-dark(rgba(190, 18, 60, 0.1), rgba(244, 63, 94, 0.2));
+  --plat-bilibili-fg: light-dark(#be185d, #f9a8d4);
+  --plat-bilibili-bg: light-dark(rgba(190, 24, 93, 0.1), rgba(236, 72, 153, 0.2));
+  --plat-xiaoyuzhou-fg: light-dark(#0369a1, #7dd3fc);
+  --plat-xiaoyuzhou-bg: light-dark(rgba(3, 105, 161, 0.1), rgba(14, 165, 233, 0.2));
+
+  --status-ok-fg: light-dark(#15803d, #86efac);
+  --status-ok-bg: light-dark(rgba(21, 128, 61, 0.1), rgba(34, 197, 94, 0.18));
+  --status-warn-fg: light-dark(#92400e, #fcd34d);
+  --status-warn-bg: light-dark(rgba(180, 83, 9, 0.12), rgba(245, 158, 11, 0.18));
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--ui-background);
+  color: var(--ui-foreground);
+  font-family: var(--ui-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--ui-font-mono);
+}
+
+/* Override web.css default panel padding and minimum widths for Arbok's desktop layout */
+.arbok-resizable [data-slot="resizable-panel"] {
+  padding: 0;
+  overflow: hidden;
+}
+
+.arbok-resizable [data-slot="resizable-handle"] {
+  width: 6px;
+  background: transparent;
+  border-left: 1px solid var(--ui-border);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.arbok-resizable [data-slot="resizable-handle"]:hover,
+.arbok-resizable [data-slot="resizable-handle"][data-dragging] {
+  background: var(--arbok-accent-soft);
+  border-left-color: var(--ui-ring-border);
+}
+
+.arbok-compact-progress[data-slot="progress"] {
+  min-width: 0;
+  gap: 0.375rem;
+}
+
+.arbok-compact-slider[data-slot="slider"] {
+  min-width: 0;
+  width: 100%;
+}
+
+.arbok-compact-slider [data-slot="slider-track"] {
+  height: 5px;
+}
+
+.arbok-compact-slider [data-slot="slider-thumb"] {
+  width: 13px;
+  height: 13px;
+}
+
+.arbok-card-button[data-slot="button"] {
+  height: auto;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+  font-weight: inherit;
+}
+
+.arbok-grid-card[data-slot="button"] {
+  display: flex;
+  height: auto;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-weight: inherit;
+}
+
+.arbok-grid-card[data-slot="button"]:hover {
+  background: transparent;
+}
+
+.arbok-hero-play[data-slot="button"] {
+  height: 2.125rem;
+  border-color: transparent;
+  background: var(--arbok-hero-btn-bg);
+  color: var(--arbok-hero-btn-fg);
+  padding-inline: 0.95rem;
+  font-weight: 600;
+}
+
+.arbok-hero-play[data-slot="button"]:hover {
+  opacity: 0.9;
+}
+
+.arbok-circle-btn[data-slot="button"] {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: 9999px;
+}
+
+.arbok-nav-button[data-slot="button"] {
+  height: 2rem;
+  width: 100%;
+  justify-content: flex-start;
+  border: 1px solid transparent;
+  background: transparent;
+  padding-inline: 0.625rem;
+  font-weight: 450;
+  color: var(--ui-muted-foreground);
+}
+
+.arbok-nav-button[data-slot="button"]:hover {
+  background: var(--ui-muted);
+  color: var(--ui-foreground);
+}
+
+.arbok-nav-button[data-slot="button"][data-active="true"] {
+  background: var(--arbok-accent-soft);
+  border-color: var(--arbok-accent-border);
+  color: var(--arbok-accent-text);
+  font-weight: 600;
+}
+
+.arbok-provider-row[data-slot="button"] {
+  justify-content: space-between;
+}
+
+.arbok-cli-checkbox[data-slot="checkbox"]:is([data-checked], [data-indeterminate]) {
+  border-color: var(--arbok-hero-btn-bg);
+  background: var(--arbok-hero-btn-bg);
+  color: var(--arbok-hero-btn-fg);
+}
+
+.arbok-cli-action-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  background: var(--arbok-hero-btn-bg);
+  padding: 0.25rem;
+}
+
+.arbok-cli-action-btn[data-slot="button"] {
+  height: 2.15rem;
+  width: 100%;
+  border-radius: 0.5rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--arbok-hero-btn-fg);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.arbok-cli-action-btn[data-slot="button"]:hover {
+  background: light-dark(rgba(255, 255, 255, 0.14), rgba(0, 0, 0, 0.12));
+}
+
+.arbok-cli-action-btn[data-slot="button"][data-active="true"] {
+  background: light-dark(rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.18));
+  font-weight: 600;
+}
+
+.arbok-sub-row[data-slot="button"] {
+  height: auto;
+  min-height: 2.9rem;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  font-weight: 400;
+}
+
+.arbok-sub-row[data-slot="button"]:hover {
+  background: var(--ui-muted);
+}
+
+.arbok-sub-row[data-slot="button"][data-active="true"] {
+  background: var(--arbok-accent-soft);
+  border-color: var(--arbok-accent-border);
+}
+
+.arbok-font-lxgw {
+  font-family: "LXGW WenKai Screen", "LXGW WenKai", "Kaiti SC", "STKaiti", serif;
+}
+
+.arbok-sub-overlay-translucent {
+  background: rgba(8, 8, 12, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 0.75rem;
+  padding: 0.65rem 1.25rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.arbok-sub-overlay-outline {
+  background: transparent;
+  padding: 0.3rem 0.65rem;
+  -webkit-text-stroke: 3.5px rgba(0, 0, 0, 0.94);
+  paint-order: stroke fill;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.88);
+}
+
+.arbok-sub-overlay-none {
+  background: transparent;
+  padding: 0.3rem 0.65rem;
+  text-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.95),
+    0 0 3px rgba(0, 0, 0, 0.95);
+}
+
+.arbok-dialog-fullscreen[data-slot="dialog-content"] {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: 100vw;
+  max-height: 100dvh;
+  margin: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ui-background);
+}
+
+.arbok-dialog-wide[data-slot="dialog-content"] {
+  width: min(46rem, calc(100vw - 2rem));
+  max-width: 46rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+.arbok-dialog-standard[data-slot="dialog-content"] {
+  width: min(35rem, calc(100vw - 2rem));
+  max-width: 35rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+.arbok-settings-tabs[data-slot="tabs"] {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.arbok-settings-tabs [data-slot="tabs-list"] {
+  width: 14.5rem;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--ui-border);
+  border-bottom: 0;
+  background: var(--arbok-sidebar);
+  overflow-y: auto;
+}
+
+.arbok-settings-tabs [data-slot="tabs-tab"] {
+  justify-content: flex-start;
+  gap: 0.625rem;
+  height: auto;
+  margin-bottom: 0;
+  margin-inline-end: 0;
+  border: 1px solid transparent;
+  border-inline-end: 1px solid transparent;
+  border-radius: var(--ui-radius);
+  padding: 0.55rem 0.8rem;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--ui-muted-foreground);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.arbok-settings-tabs [data-slot="tabs-tab"]:hover:not([data-selected]) {
+  background: var(--ui-muted);
+  color: var(--ui-foreground);
+}
+
+.arbok-settings-tabs [data-slot="tabs-tab"][data-selected] {
+  background: var(--ui-background);
+  color: var(--ui-foreground);
+  font-weight: 600;
+  border-color: var(--ui-border);
+  border-inline-end-color: var(--ui-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.arbok-settings-tabs .arbok-tab-icon {
+  color: var(--ui-muted-foreground);
+  transition: color 150ms ease;
+}
+
+.arbok-settings-tabs [data-slot="tabs-tab"]:hover .arbok-tab-icon {
+  color: var(--ui-foreground);
+}
+
+.arbok-settings-tabs [data-slot="tabs-tab"][data-selected] .arbok-tab-icon {
+  color: var(--arbok-settings-icon-active);
+}
+
+.arbok-settings-tabs [data-slot="tabs-panel"] {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.75rem 2.25rem 3rem;
+  background: var(--arbok-canvas);
+}
+
+.arbok-settings-tabs [data-slot="tabs-panel"] > * {
+  width: 100%;
+  max-width: 50rem;
+  margin-inline: 0;
+}
+
+.arbok-scroll[data-slot="scroll-area"] {
+  height: 100%;
+  width: 100%;
+}
+
+.arbok-scroll [data-slot="scroll-area-viewport"] {
+  height: 100%;
+  width: 100%;
+}
+
+.arbok-field-row[data-slot="field"] {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.arbok-subtitle-row[data-slot="button"] {
+  height: auto;
+  width: 100%;
+  justify-content: flex-start;
+  align-items: flex-start;
+  text-align: left;
+  white-space: normal;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.7rem 0.875rem;
+  border-radius: 0.625rem;
+}
+
+.arbok-subtitle-row[data-slot="button"]:hover {
+  background: var(--ui-muted);
+}
+
+.arbok-subtitle-row[data-slot="button"][data-active="true"] {
+  background: var(--arbok-accent-soft);
+  border-color: var(--arbok-accent-border);
+}
+
+@keyframes arbokEqBounce {
+  0% {
+    height: 4px;
+  }
+  100% {
+    height: 18px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.arbok-eq-playing .arbok-eq-bar {
+  animation: arbokEqBounce 0.85s ease-in-out infinite alternate;
+}
+
+.arbok-eq-playing .arbok-eq-bar:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.arbok-eq-playing .arbok-eq-bar:nth-child(3) {
+  animation-delay: 0.34s;
+}
+
+.arbok-eq-playing .arbok-eq-bar:nth-child(4) {
+  animation-delay: 0.1s;
+}
+
+.arbok-eq-playing .arbok-eq-bar:nth-child(5) {
+  animation-delay: 0.26s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arbok-eq-playing .arbok-eq-bar {
+    animation: none;
+  }
 }
