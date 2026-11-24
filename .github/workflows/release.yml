@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Verify SemVer tag matches package.json and APP_VERSION
@@ -47,8 +47,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint, Typecheck, and Test
-        run: npm run lint && npx tsc --noEmit && npm test
+      - name: Typegen, Lint, Typecheck, and Test
+        run: npx next typegen && npm run lint && npx tsc --noEmit && npm test
 
       - name: Generate OTA manifest (latest.json)
         run: |
