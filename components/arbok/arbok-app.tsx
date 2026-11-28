@@ -435,6 +435,10 @@ export function ArbokApp() {
           isDesktop?: boolean;
           setAutoDownload?: (enabled: boolean) => Promise<boolean>;
           setUpdateChannel?: (channel: "stable" | "beta") => Promise<string>;
+          setProxyConfig?: (cfg: {
+            proxyMode: "system" | "custom" | "direct";
+            proxyUrl: string;
+          }) => Promise<unknown>;
           onUpdateEvent?: (
             listener: (payload: {
               status?: string;
@@ -448,6 +452,10 @@ export function ArbokApp() {
     if (!bridge?.isDesktop) return;
     void bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
     void bridge.setUpdateChannel?.(settings.updateChannel ?? "stable");
+    void bridge.setProxyConfig?.({
+      proxyMode: settings.proxyMode ?? "system",
+      proxyUrl: settings.proxyUrl ?? "",
+    });
     let notifiedVersion: string | null = null;
     const unsub = bridge.onUpdateEvent?.((payload) => {
       if (
@@ -465,7 +473,13 @@ export function ArbokApp() {
     return () => {
       unsub?.();
     };
-  }, [settings.autoDownloadUpdates, settings.updateChannel, toaster]);
+  }, [
+    settings.autoDownloadUpdates,
+    settings.updateChannel,
+    settings.proxyMode,
+    settings.proxyUrl,
+    toaster,
+  ]);
 
   const currentEpisode = useMemo(
     () => episodes.find((ep) => ep.id === currentEpId) ?? episodes[0],

@@ -206,6 +206,53 @@ interface SettingsDialogProps {
   onRefreshEnv: () => Promise<void>;
 }
 
+type DesktopUpdateState = {
+  status:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "downloaded"
+    | "installing"
+    | "up-to-date"
+    | "error";
+  currentVersion?: string;
+  latestVersion?: string | null;
+  channel?: UpdateChannel;
+  isPrerelease?: boolean;
+  downloadUrl?: string | null;
+  releaseUrl?: string | null;
+  percent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  message?: string;
+};
+
+type ArbokDesktopBridge = {
+  isDesktop?: boolean;
+  getUpdateState?: () => Promise<DesktopUpdateState>;
+  checkForUpdates?: (
+    options?: string | { repo?: string; channel?: UpdateChannel }
+  ) => Promise<DesktopUpdateState>;
+  downloadUpdate?: () => Promise<DesktopUpdateState>;
+  setAutoDownload?: (enabled: boolean) => Promise<boolean>;
+  setUpdateChannel?: (channel: UpdateChannel) => Promise<UpdateChannel>;
+  setProxyConfig?: (cfg: {
+    proxyMode: "system" | "custom" | "direct";
+    proxyUrl: string;
+  }) => Promise<unknown>;
+  quitAndInstall?: () => Promise<{ ok: boolean; error?: string }>;
+  onUpdateEvent?: (
+    listener: (payload: DesktopUpdateState) => void
+  ) => () => void;
+};
+
+function getDesktopBridge(): ArbokDesktopBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { arbokDesktop?: ArbokDesktopBridge })
+    .arbokDesktop;
+}
+
 const PROXY_MODES = [
   { value: "system", label: "跟随 macOS 系统代理（推荐）" },
   { value: "custom", label: "自定义 HTTP / SOCKS5 代理" },
@@ -299,54 +346,19 @@ export function SettingsDialog({
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateCheckResult, setUpdateCheckResult] =
     useState<UpdateCheckResult | null>(null);
-  const [desktopUpdate, setDesktopUpdate] = useState<{
-    status:
-      | "idle"
-      | "checking"
-      | "available"
-      | "downloading"
-      | "downloaded"
-      | "installing"
-      | "up-to-date"
-      | "error";
-    currentVersion?: string;
-    latestVersion?: string | null;
-    channel?: UpdateChannel;
-    isPrerelease?: boolean;
-    downloadUrl?: string | null;
-    releaseUrl?: string | null;
-    percent?: number;
-    transferredBytes?: number;
-    totalBytes?: number;
-    message?: string;
-  } | null>(null);
-
-  type ArbokDesktopBridge = {
-    isDesktop?: boolean;
-    getUpdateState?: () => Promise<NonNullable<typeof desktopUpdate>>;
-    checkForUpdates?: (
-      options?: string | { repo?: string; channel?: UpdateChannel }
-    ) => Promise<NonNullable<typeof desktopUpdate>>;
-    downloadUpdate?: () => Promise<NonNullable<typeof desktopUpdate>>;
-    setAutoDownload?: (enabled: boolean) => Promise<boolean>;
-    setUpdateChannel?: (channel: UpdateChannel) => Promise<UpdateChannel>;
-    quitAndInstall?: () => Promise<{ ok: boolean; error?: string }>;
-    onUpdateEvent?: (
-      listener: (payload: NonNullable<typeof desktopUpdate>) => void
-    ) => () => void;
-  };
-
-  function getDesktopBridge(): ArbokDesktopBridge | undefined {
-    if (typeof window === "undefined") return undefined;
-    return (window as unknown as { arbokDesktop?: ArbokDesktopBridge })
-      .arbokDesktop;
-  }
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateState | null>(
+    null
+  );
 
   useEffect(() => {
     const bridge = getDesktopBridge();
     if (!bridge?.isDesktop) return;
     void bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
     void bridge.setUpdateChannel?.(settings.updateChannel ?? "stable");
+    void bridge.setProxyConfig?.({
+      proxyMode: settings.proxyMode ?? "system",
+      proxyUrl: settings.proxyUrl ?? "",
+    });
     void bridge
       .getUpdateState?.()
       .then((state) => {
@@ -361,7 +373,12 @@ export function SettingsDialog({
     return () => {
       unsubscribe?.();
     };
-  }, [settings.autoDownloadUpdates, settings.updateChannel]);
+  }, [
+    settings.autoDownloadUpdates,
+    settings.updateChannel,
+    settings.proxyMode,
+    settings.proxyUrl,
+  ]);
 
   async function handleCheckUpdates() {
     setCheckingUpdate(true);

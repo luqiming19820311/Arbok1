@@ -1,11 +1,15 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { app, BrowserWindow, dialog, ipcMain, Menu, net: electronNet, screen, shell, utilityProcess } = require("electron");
-const { execFileSync, spawn } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const {
+  downloadFileWithFallback,
+  fetchJsonWithFallback,
+} = require("./updater-net.cjs");
 
 let autoUpdater = null;
 try {
@@ -270,11 +274,17 @@ const updaterState = {
   transferredBytes: 0,
   totalBytes: 0,
   autoDownload: true,
+  proxyMode: "system",
+  proxyUrl: "",
   message: "",
 };
 
 function normalizeUpdateChannel(raw) {
   return raw === "beta" ? "beta" : "stable";
+}
+
+function normalizeProxyMode(raw) {
+  return raw === "custom" || raw === "direct" ? raw : "system";
 }
 
 function getUpdaterPrefsPath() {
@@ -291,6 +301,12 @@ function loadUpdaterPrefs() {
     if (parsed.channel === "beta" || parsed.channel === "stable") {
       updaterState.channel = parsed.channel;
     }
+    if (parsed.proxyMode) {
+      updaterState.proxyMode = normalizeProxyMode(parsed.proxyMode);
+    }
+    if (typeof parsed.proxyUrl === "string") {
+      updaterState.proxyUrl = parsed.proxyUrl.trim();
+    }
   } catch {
     // Use default stable channel + autoDownload on first launch.
   }
@@ -306,6 +322,8 @@ function saveUpdaterPrefs() {
         {
           channel: updaterState.channel,
           autoDownload: updaterState.autoDownload,
+          proxyMode: updaterState.proxyMode,
+          proxyUrl: updaterState.proxyUrl,
         },
         null,
         2
@@ -440,56 +458,33 @@ async function downloadAppUpdate() {
     });
 
     try {
-      const res = await electronNet.fetch(updaterState.downloadUrl, {
-        headers: { "User-Agent": `Arbok/${app.getVersion()}` },
-      });
-      if (!res.ok || !res.body) {
-        throw new Error(`下载更新失败（HTTP ${res.status}）`);
-      }
-
-      const headerLen = Number(res.headers.get("content-length") || 0);
-      const totalBytes = headerLen > 0 ? headerLen : updaterState.totalBytes || 0;
-      const writer = fs.createWriteStream(partPath);
-      const reader = res.body.getReader();
-      let transferred = 0;
-      let lastEmitAt = 0;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-          transferred += value.byteLength;
-          writer.write(Buffer.from(value));
-          const now = Date.now();
-          if (now - lastEmitAt >= 250) {
-            lastEmitAt = now;
-            const percent =
-              totalBytes > 0
-                ? Math.min(99, Math.round((transferred / totalBytes) * 100))
-                : 0;
+      const result = await downloadFileWithFallback(
+        updaterState.downloadUrl,
+        partPath,
+        {
+          proxyMode: updaterState.proxyMode,
+          proxyUrl: updaterState.proxyUrl,
+          userAgent: `Arbok/${app.getVersion()}`,
+          totalBytes: updaterState.totalBytes || 0,
+          electronNetFetch: (...args) => electronNet.fetch(...args),
+          onProgress: ({ transferredBytes, totalBytes, percent }) => {
             emitUpdateState({
               status: "downloading",
               percent,
-              transferredBytes: transferred,
+              transferredBytes,
               totalBytes,
               message: `正在自动下载 V${updaterState.latestVersion}（${percent}%）…`,
             });
-          }
+          },
         }
-      }
-
-      await new Promise((resolve, reject) => {
-        writer.on("finish", resolve);
-        writer.on("error", reject);
-        writer.end();
-      });
+      );
 
       fs.renameSync(partPath, targetPath);
       return emitUpdateState({
         status: "downloaded",
         percent: 100,
-        transferredBytes: transferred,
-        totalBytes: totalBytes || transferred,
+        transferredBytes: result.transferredBytes,
+        totalBytes: result.totalBytes || result.transferredBytes,
         downloadedFilePath: targetPath,
         message: `新版本 V${updaterState.latestVersion} 已下载完成，重启后即可生效`,
       });
@@ -531,11 +526,11 @@ async function checkForAppUpdates(options = {}) {
       channel === "beta"
         ? `https://api.github.com/repos/${repo}/releases?per_page=15`
         : `https://api.github.com/repos/${repo}/releases/latest`;
-    const res = await electronNet.fetch(endpoint, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": `Arbok/${app.getVersion()}`,
-      },
+    const res = await fetchJsonWithFallback(endpoint, {
+      proxyMode: updaterState.proxyMode,
+      proxyUrl: updaterState.proxyUrl,
+      userAgent: `Arbok/${app.getVersion()}`,
+      electronNetFetch: (...args) => electronNet.fetch(...args),
     });
 
     if (res.status === 404) {
@@ -551,7 +546,7 @@ async function checkForAppUpdates(options = {}) {
       throw new Error(`检查更新失败（GitHub 返回 ${res.status}）`);
     }
 
-    const raw = await res.json();
+    const raw = res.data;
     const data = Array.isArray(raw) ? pickHighestSemverRelease(raw) : raw;
     if (!data || !data.tag_name) {
       return emitUpdateState({
@@ -623,10 +618,24 @@ function findExtractedAppBundle(dir) {
   return null;
 }
 
-function installDownloadedUpdate({ relaunch = true } = {}) {
-  if (updateInstallTriggered) return { ok: true };
+function execFileAsync(bin, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, opts, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error((stderr || err.message || `${bin} failed`).trim()));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function installDownloadedUpdate({ relaunch = true, bypassGuard = false } = {}) {
+  if (updateInstallTriggered && !bypassGuard) return { ok: true };
+  updateInstallTriggered = true;
   const filePath = updaterState.downloadedFilePath;
   if (!filePath || !fs.existsSync(filePath)) {
+    updateInstallTriggered = false;
     return { ok: false, error: "尚未找到已下载的更新安装包" };
   }
 
@@ -636,18 +645,19 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
   }
 
   if (filePath.toLowerCase().endsWith(".dmg")) {
-    updateInstallTriggered = true;
     void shell.openPath(filePath);
     return { ok: true, openedExternal: true };
   }
 
   if (!app.isPackaged) {
+    updateInstallTriggered = false;
     shell.showItemInFolder(filePath);
     return { ok: true, openedExternal: true };
   }
 
   const currentAppPath = path.resolve(process.execPath, "..", "..", "..");
   if (!currentAppPath.endsWith(".app") || !fs.existsSync(currentAppPath)) {
+    updateInstallTriggered = false;
     shell.showItemInFolder(filePath);
     return { ok: false, error: "未能定位当前 Arbok.app 安装路径" };
   }
@@ -656,6 +666,7 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
   try {
     fs.accessSync(parentDir, fs.constants.W_OK);
   } catch {
+    updateInstallTriggered = false;
     shell.showItemInFolder(filePath);
     return {
       ok: false,
@@ -665,18 +676,16 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
 
   emitUpdateState({
     status: "installing",
-    message: `正在安装 V${updaterState.latestVersion} 并重启…`,
+    message: `正在解压并安装 V${updaterState.latestVersion}…`,
   });
 
-  const stageDir = path.join(
-    app.getPath("userData"),
-    "updates",
-    `stage-${Date.now()}`
-  );
+  const updatesDir = path.join(app.getPath("userData"), "updates");
+  const stageDir = path.join(updatesDir, `stage-${Date.now()}`);
+  const logPath = path.join(updatesDir, "install.log");
   fs.mkdirSync(stageDir, { recursive: true });
 
   try {
-    execFileSync("/usr/bin/ditto", ["-xk", filePath, stageDir], {
+    await execFileAsync("/usr/bin/ditto", ["-xk", filePath, stageDir], {
       timeout: 120_000,
     });
     const newAppPath = findExtractedAppBundle(stageDir);
@@ -684,7 +693,7 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
       throw new Error("更新包中未找到 Arbok.app");
     }
     try {
-      execFileSync("/usr/bin/xattr", ["-cr", newAppPath], { timeout: 15_000 });
+      await execFileAsync("/usr/bin/xattr", ["-cr", newAppPath], { timeout: 15_000 });
     } catch {
       // Best-effort quarantine cleanup.
     }
@@ -695,15 +704,24 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
     );
 
     const script = [
+      'exec >>"$ARBOK_INSTALL_LOG" 2>&1',
+      'echo "[$(date "+%Y-%m-%d %H:%M:%S")] Starting swap: $ARBOK_NEW_APP -> $ARBOK_TARGET_APP (pid=$ARBOK_PID)"',
       'i=0',
-      'while kill -0 "$ARBOK_PID" 2>/dev/null && [ $i -lt 60 ]; do sleep 0.25; i=$((i + 1)); done',
+      'while kill -0 "$ARBOK_PID" 2>/dev/null && [ $i -lt 80 ]; do sleep 0.25; i=$((i + 1)); done',
+      'sleep 0.5',
       'rm -rf "$ARBOK_BACKUP_APP"',
-      'if mv "$ARBOK_TARGET_APP" "$ARBOK_BACKUP_APP" && mv "$ARBOK_NEW_APP" "$ARBOK_TARGET_APP"; then',
-      '  rm -rf "$ARBOK_BACKUP_APP" "$ARBOK_STAGE_DIR" "$ARBOK_ZIP_FILE"',
-      '  /usr/bin/xattr -cr "$ARBOK_TARGET_APP" 2>/dev/null || true',
-      '  if [ "$ARBOK_RELAUNCH" = "1" ]; then /usr/bin/open -n "$ARBOK_TARGET_APP"; fi',
+      'if mv "$ARBOK_TARGET_APP" "$ARBOK_BACKUP_APP"; then',
+      '  if mv "$ARBOK_NEW_APP" "$ARBOK_TARGET_APP" || /usr/bin/ditto "$ARBOK_NEW_APP" "$ARBOK_TARGET_APP"; then',
+      '    rm -rf "$ARBOK_BACKUP_APP" "$ARBOK_STAGE_DIR" "$ARBOK_ZIP_FILE"',
+      '    /usr/bin/xattr -cr "$ARBOK_TARGET_APP" 2>/dev/null || true',
+      '    echo "[$(date "+%Y-%m-%d %H:%M:%S")] Swap succeeded"',
+      '    if [ "$ARBOK_RELAUNCH" = "1" ]; then /usr/bin/open "$ARBOK_TARGET_APP"; fi',
+      '  else',
+      '    echo "[$(date "+%Y-%m-%d %H:%M:%S")] Move/copy new app failed, restoring backup"',
+      '    [ -d "$ARBOK_BACKUP_APP" ] && [ ! -d "$ARBOK_TARGET_APP" ] && mv "$ARBOK_BACKUP_APP" "$ARBOK_TARGET_APP"',
+      '  fi',
       'else',
-      '  [ -d "$ARBOK_BACKUP_APP" ] && [ ! -d "$ARBOK_TARGET_APP" ] && mv "$ARBOK_BACKUP_APP" "$ARBOK_TARGET_APP"',
+      '  echo "[$(date "+%Y-%m-%d %H:%M:%S")] Failed to move existing target app"',
       'fi',
     ].join("\n");
 
@@ -718,6 +736,7 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
         ARBOK_BACKUP_APP: backupAppPath,
         ARBOK_STAGE_DIR: stageDir,
         ARBOK_ZIP_FILE: filePath,
+        ARBOK_INSTALL_LOG: logPath,
         ARBOK_RELAUNCH: relaunch ? "1" : "0",
       },
     });
@@ -731,6 +750,7 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
     }
     return { ok: true };
   } catch (err) {
+    updateInstallTriggered = false;
     try {
       fs.rmSync(stageDir, { recursive: true, force: true });
     } catch {
@@ -788,6 +808,19 @@ ipcMain.handle("arbok:set-update-channel", (_event, channel) => {
   }
   return updaterState.channel;
 });
+ipcMain.handle("arbok:set-proxy-config", (_event, cfg) => {
+  if (cfg && typeof cfg === "object") {
+    updaterState.proxyMode = normalizeProxyMode(cfg.proxyMode);
+    if (typeof cfg.proxyUrl === "string") {
+      updaterState.proxyUrl = cfg.proxyUrl.trim();
+    }
+    saveUpdaterPrefs();
+  }
+  return {
+    proxyMode: updaterState.proxyMode,
+    proxyUrl: updaterState.proxyUrl,
+  };
+});
 ipcMain.handle("arbok:check-update", async (_event, payload) => {
   const repo =
     typeof payload === "string"
@@ -808,8 +841,8 @@ ipcMain.handle("arbok:check-update", async (_event, payload) => {
 ipcMain.handle("arbok:download-update", async () => {
   return await downloadAppUpdate();
 });
-ipcMain.handle("arbok:quit-and-install", () => {
-  return installDownloadedUpdate({ relaunch: true });
+ipcMain.handle("arbok:quit-and-install", async () => {
+  return await installDownloadedUpdate({ relaunch: true });
 });
 
 ipcMain.handle("arbok:set-pip", (_event, enabled) => {
@@ -941,13 +974,23 @@ if (!gotLock) {
     });
   });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
     if (
       updaterState.status === "downloaded" &&
       updaterState.autoDownload &&
       !updateInstallTriggered
     ) {
-      installDownloadedUpdate({ relaunch: false });
+      event.preventDefault();
+      updateInstallTriggered = true;
+      void installDownloadedUpdate({
+        relaunch: false,
+        bypassGuard: true,
+      }).finally(() => {
+        isQuitting = true;
+        stopEmbeddedServer();
+        app.quit();
+      });
+      return;
     }
     isQuitting = true;
     stopEmbeddedServer();

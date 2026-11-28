@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("arbokDesktop", {
     ipcRenderer.invoke("arbok:set-auto-download", Boolean(enabled)),
   setUpdateChannel: (channel) =>
     ipcRenderer.invoke("arbok:set-update-channel", channel),
+  setProxyConfig: (config) =>
+    ipcRenderer.invoke("arbok:set-proxy-config", config),
   quitAndInstall: () => ipcRenderer.invoke("arbok:quit-and-install"),
   setPipMode: (enabled) => ipcRenderer.invoke("arbok:set-pip", Boolean(enabled)),
   onUpdateEvent: (listener) => {
