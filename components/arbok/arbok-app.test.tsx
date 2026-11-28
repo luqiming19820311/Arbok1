@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createAgent } from "@ui-sdk/react/agent";
 import { expect, test, vi } from "vitest";
+import { APP_VERSION } from "@/lib/arbok/version";
 import { ArbokApp } from "./arbok-app";
 import { disableYouTubeCaptions, type YtPlayerInstance } from "./youtube-hd-player";
 
@@ -257,7 +258,7 @@ test("manage subscriptions dialog supports custom folders, moving channels, and 
   expect(screen.getByRole("button", { name: "收起分类 科技类" })).toBeTruthy();
 });
 
-test("supports Follow System theme mode and About tab with V0.2.1 OTA panel without OTA rules card", async () => {
+test("supports Follow System theme mode and About tab with current version OTA panel without OTA rules card", async () => {
   const user = userEvent.setup();
   render(<ArbokApp />);
 
@@ -269,7 +270,7 @@ test("supports Follow System theme mode and About tab with V0.2.1 OTA panel with
   expect(followSystemBtn.getAttribute("aria-checked")).toBe("true");
 
   await user.click(screen.getByRole("tab", { name: "关于" }));
-  expect(screen.getByText(/版本 V0\.2\.1/)).toBeTruthy();
+  expect(screen.getByText(`版本 V${APP_VERSION}`)).toBeTruthy();
   expect(
     screen.getByText(
       /支持 YouTube、哔哩哔哩、播客，配中文字幕、翻译和播报、AI 导读、AI 问答、笔记等功能。/

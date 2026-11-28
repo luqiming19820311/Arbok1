@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import pkg from "@/package.json";
 import {
   APP_VERSION,
   checkGitHubUpdate,
@@ -29,7 +30,8 @@ describe("GitHub OTA updates helper", () => {
   });
 
   it("compares SemVer tags accurately including numeric prereleases", () => {
-    expect(APP_VERSION).toBe("0.2.1");
+    expect(APP_VERSION).toBe(pkg.version);
+    expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
     expect(compareSemver("0.1.0", "0.1.0")).toBe(0);
     expect(compareSemver("0.1.0", "v0.1.1")).toBeGreaterThan(0);
     expect(compareSemver("0.1.0", "V0.2.0")).toBeGreaterThan(0);
