@@ -1011,6 +1011,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showRecommendations: true,
   keepOriginalShowNames: false,
   autoDownloadUpdates: true,
+  updateChannel: "stable",
   otaRepo: "luqiming19820311/Arbok1",
   ttsEngine: "local",
   cloudTtsProvider: "doubao-tts",

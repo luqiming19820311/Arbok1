@@ -434,14 +434,20 @@ export function ArbokApp() {
         arbokDesktop?: {
           isDesktop?: boolean;
           setAutoDownload?: (enabled: boolean) => Promise<boolean>;
+          setUpdateChannel?: (channel: "stable" | "beta") => Promise<string>;
           onUpdateEvent?: (
-            listener: (payload: { status?: string; latestVersion?: string }) => void
+            listener: (payload: {
+              status?: string;
+              latestVersion?: string;
+              isPrerelease?: boolean;
+            }) => void
           ) => () => void;
         };
       }
     ).arbokDesktop;
     if (!bridge?.isDesktop) return;
     void bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
+    void bridge.setUpdateChannel?.(settings.updateChannel ?? "stable");
     let notifiedVersion: string | null = null;
     const unsub = bridge.onUpdateEvent?.((payload) => {
       if (
@@ -450,15 +456,16 @@ export function ArbokApp() {
         payload.latestVersion !== notifiedVersion
       ) {
         notifiedVersion = payload.latestVersion;
+        const versionKind = payload.isPrerelease ? "新测试版" : "新版本";
         toaster.success(
-          `新版本 V${payload.latestVersion} 已自动下载完成，可在「偏好设置 → 关于」立即重启安装`
+          `${versionKind} V${payload.latestVersion} 已自动下载完成，可在「偏好设置 → 关于」立即重启安装`
         );
       }
     });
     return () => {
       unsub?.();
     };
-  }, [settings.autoDownloadUpdates, toaster]);
+  }, [settings.autoDownloadUpdates, settings.updateChannel, toaster]);
 
   const currentEpisode = useMemo(
     () => episodes.find((ep) => ep.id === currentEpId) ?? episodes[0],

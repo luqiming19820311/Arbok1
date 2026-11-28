@@ -371,17 +371,36 @@ test("supports episode favorites (star, play all, unfavorite), collapsible subti
   expect(screen.getByText("还没有收藏的单集")).toBeTruthy();
 });
 
-test("desktop OTA updater checks, auto-downloads, and triggers quitAndInstall inside About tab", async () => {
+test("desktop OTA updater supports Stable/Beta channel switching, auto-download, and quitAndInstall inside About tab", async () => {
   const user = userEvent.setup();
   const quitAndInstall = vi.fn(async () => ({ ok: true }));
   const setAutoDownload = vi.fn(async (enabled: boolean) => enabled);
-  const checkForUpdates = vi.fn(async () => ({
-    status: "downloaded" as const,
-    currentVersion: "0.2.1",
-    latestVersion: "0.2.2",
-    percent: 100,
-    message: "新版本 V0.2.2 已下载完成，重启后即可生效",
-  }));
+  const setUpdateChannel = vi.fn(async (channel: "stable" | "beta") => channel);
+  const checkForUpdates = vi.fn(
+    async (opts?: string | { repo?: string; channel?: "stable" | "beta" }) => {
+      const channel =
+        typeof opts === "object" && opts?.channel === "beta" ? "beta" : "stable";
+      return channel === "beta"
+        ? {
+            status: "downloaded" as const,
+            currentVersion: "0.2.1",
+            latestVersion: "0.3.0-beta.1",
+            channel: "beta" as const,
+            isPrerelease: true,
+            percent: 100,
+            message: "新版本 V0.3.0-beta.1 已下载完成，重启后即可生效",
+          }
+        : {
+            status: "downloaded" as const,
+            currentVersion: "0.2.1",
+            latestVersion: "0.2.2",
+            channel: "stable" as const,
+            isPrerelease: false,
+            percent: 100,
+            message: "新版本 V0.2.2 已下载完成，重启后即可生效",
+          };
+    }
+  );
 
   const prevDesktop = (window as unknown as { arbokDesktop?: unknown }).arbokDesktop;
   (window as unknown as { arbokDesktop?: unknown }).arbokDesktop = {
@@ -389,6 +408,7 @@ test("desktop OTA updater checks, auto-downloads, and triggers quitAndInstall in
     getUpdateState: vi.fn(async () => ({ status: "idle" })),
     checkForUpdates,
     setAutoDownload,
+    setUpdateChannel,
     quitAndInstall,
     onUpdateEvent: vi.fn(() => () => {}),
   };
@@ -397,11 +417,22 @@ test("desktop OTA updater checks, auto-downloads, and triggers quitAndInstall in
     render(<ArbokApp />);
     await user.click(screen.getByRole("button", { name: /偏好设置/ }));
     await user.click(screen.getByRole("tab", { name: "关于" }));
+
+    const betaCheckbox = screen.getByRole("checkbox", {
+      name: "接收测试版更新（Beta）",
+    });
+    expect(betaCheckbox.getAttribute("aria-checked")).toBe("false");
+    await user.click(betaCheckbox);
+    expect(betaCheckbox.getAttribute("aria-checked")).toBe("true");
+    expect(setUpdateChannel).toHaveBeenCalledWith("beta");
+
     await user.click(screen.getByRole("button", { name: /检查更新/ }));
 
-    expect(checkForUpdates).toHaveBeenCalled();
+    expect(checkForUpdates).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "beta" })
+    );
     const installBtn = await screen.findByRole("button", {
-      name: /立即重启并安装 V0\.2\.2/,
+      name: /立即重启并安装 V0\.3\.0-beta\.1/,
     });
     await user.click(installBtn);
     expect(quitAndInstall).toHaveBeenCalledTimes(1);

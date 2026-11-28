@@ -36,10 +36,14 @@ export type TranslationPairId =
 
 export type ThemeMode = "system" | "light" | "dark";
 
+export type UpdateChannel = "stable" | "beta";
+
 export interface UpdateCheckResult {
   status: "up-to-date" | "update-available" | "no-release" | "error";
   currentVersion: string;
   latestVersion?: string;
+  channel?: UpdateChannel;
+  isPrerelease?: boolean;
   releaseUrl?: string;
   downloadUrl?: string;
   notes?: string;
@@ -219,6 +223,7 @@ export interface AppSettings {
   showRecommendations?: boolean;
   keepOriginalShowNames?: boolean;
   autoDownloadUpdates?: boolean;
+  updateChannel?: UpdateChannel;
   otaRepo?: string;
   ttsEngine: TtsEngine;
   cloudTtsProvider: CloudTtsProviderId;

@@ -15,7 +15,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "dist:prepare": "npm run build && node scripts/prepare-standalone.mjs",
-    "dist:mac": "npm run dist:prepare && electron-builder --mac dmg zip"
+    "dist:mac": "npm run dist:prepare && electron-builder --mac dmg zip",
+    "release:bump": "node scripts/release-bump.mjs"
   },
   "build": {
     "appId": "com.luqiming.arbok",

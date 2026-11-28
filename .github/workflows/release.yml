@@ -4,10 +4,11 @@ on:
   push:
     tags:
       - "v*.*.*"
+      - "v*.*.*-*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
+        description: "Release tag (e.g. v0.2.2 for Stable or v0.3.0-beta.1 for Beta)"
         required: true
         type: string
 
@@ -35,14 +36,31 @@ jobs:
           TAG_VER="${TAG#v}"
           TAG_VER="${TAG_VER#V}"
           PKG_VER=$(node -p "require('./package.json').version")
-          APP_VER=$(node -e "const fs=require('fs'); const m=fs.readFileSync('lib/server/updates.ts','utf8').match(/APP_VERSION\s*=\s*\"([^\"]+)\"/); console.log(m ? m[1] : '');")
-          echo "Tag: ${TAG} -> ${TAG_VER} | package.json: ${PKG_VER} | APP_VERSION: ${APP_VER}"
+          APP_VER=$(node -e '
+            const fs = require("node:fs");
+            const targets = ["lib/arbok/version.ts", "lib/server/updates.ts"];
+            for (const file of targets) {
+              if (!fs.existsSync(file)) continue;
+              const m = fs.readFileSync(file, "utf8").match(/APP_VERSION\s*=\s*"([^"]+)"/);
+              if (m) { console.log(m[1]); process.exit(0); }
+            }
+          ')
+          if [[ "${TAG_VER}" == *-* ]]; then
+            CHANNEL="beta"
+            IS_PRERELEASE="true"
+          else
+            CHANNEL="stable"
+            IS_PRERELEASE="false"
+          fi
+          echo "Tag: ${TAG} -> ${TAG_VER} | channel: ${CHANNEL} (prerelease=${IS_PRERELEASE}) | package.json: ${PKG_VER} | APP_VERSION: ${APP_VER}"
           if [ "${TAG_VER}" != "${PKG_VER}" ] || [ "${TAG_VER}" != "${APP_VER}" ]; then
             echo "::error::Version mismatch: tag=${TAG_VER}, package.json=${PKG_VER}, APP_VERSION=${APP_VER}"
             exit 1
           fi
           echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
           echo "RELEASE_VERSION=${TAG_VER}" >> "$GITHUB_ENV"
+          echo "RELEASE_CHANNEL=${CHANNEL}" >> "$GITHUB_ENV"
+          echo "IS_PRERELEASE=${IS_PRERELEASE}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: npm ci
@@ -55,19 +73,26 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run dist:mac
 
-      - name: Generate OTA manifest (latest.json)
+      - name: Generate OTA manifest (latest.json / beta.json)
         run: |
           node -e '
             const fs = require("node:fs");
+            const isPrerelease = process.env.IS_PRERELEASE === "true";
             const manifest = {
               name: "Arbok",
               version: process.env.RELEASE_VERSION,
               tag: process.env.RELEASE_TAG,
+              channel: process.env.RELEASE_CHANNEL,
+              prerelease: isPrerelease,
               repository: process.env.GITHUB_REPOSITORY,
               publishedAt: new Date().toISOString(),
               releaseUrl: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/tag/${process.env.RELEASE_TAG}`
             };
-            fs.writeFileSync("release/latest.json", JSON.stringify(manifest, null, 2) + "\n");
+            const content = JSON.stringify(manifest, null, 2) + "\n";
+            fs.writeFileSync("release/latest.json", content);
+            if (isPrerelease) {
+              fs.writeFileSync("release/beta.json", content);
+            }
           '
 
       - name: Create or update GitHub Release with .dmg / .zip / OTA manifests
@@ -75,16 +100,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ASSETS=(release/latest.json)
+          if [ -f "release/beta.json" ]; then
+            ASSETS+=(release/beta.json)
+          fi
           for f in release/*.dmg release/*.zip release/latest-mac.yml; do
             if [ -f "$f" ]; then
               ASSETS+=("$f")
             fi
           done
-          echo "Uploading assets: ${ASSETS[*]}"
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --clobber
+          echo "Uploading assets (${RELEASE_CHANNEL}): ${ASSETS[*]}"
+          if [ "${IS_PRERELEASE}" = "true" ]; then
+            TITLE="Arbok V${RELEASE_VERSION} (Beta)"
+            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+              gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --clobber
+              gh release edit "${RELEASE_TAG}" --title "${TITLE}" --prerelease
+            else
+              gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
+                --title "${TITLE}" \
+                --prerelease \
+                --generate-notes
+            fi
           else
-            gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
-              --title "Arbok V${RELEASE_VERSION}" \
-              --generate-notes
+            TITLE="Arbok V${RELEASE_VERSION}"
+            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+              gh release upload "${RELEASE_TAG}" "${ASSETS[@]}" --clobber
+              gh release edit "${RELEASE_TAG}" --title "${TITLE}" --prerelease=false --latest
+            else
+              gh release create "${RELEASE_TAG}" "${ASSETS[@]}" \
+                --title "${TITLE}" \
+                --latest \
+                --generate-notes
+            fi
           fi

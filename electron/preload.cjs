@@ -6,10 +6,12 @@ contextBridge.exposeInMainWorld("arbokDesktop", {
   platform: process.platform,
   getVersion: () => ipcRenderer.invoke("arbok:get-version"),
   getUpdateState: () => ipcRenderer.invoke("arbok:get-update-state"),
-  checkForUpdates: (repo) => ipcRenderer.invoke("arbok:check-update", repo),
+  checkForUpdates: (options) => ipcRenderer.invoke("arbok:check-update", options),
   downloadUpdate: () => ipcRenderer.invoke("arbok:download-update"),
   setAutoDownload: (enabled) =>
     ipcRenderer.invoke("arbok:set-auto-download", Boolean(enabled)),
+  setUpdateChannel: (channel) =>
+    ipcRenderer.invoke("arbok:set-update-channel", channel),
   quitAndInstall: () => ipcRenderer.invoke("arbok:quit-and-install"),
   setPipMode: (enabled) => ipcRenderer.invoke("arbok:set-pip", Boolean(enabled)),
   onUpdateEvent: (listener) => {

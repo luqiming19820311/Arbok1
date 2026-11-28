@@ -260,6 +260,8 @@ const updaterState = {
   status: "idle",
   currentVersion: app.getVersion(),
   latestVersion: null,
+  channel: "stable",
+  isPrerelease: false,
   downloadUrl: null,
   releaseUrl: null,
   assetName: null,
@@ -270,6 +272,50 @@ const updaterState = {
   autoDownload: true,
   message: "",
 };
+
+function normalizeUpdateChannel(raw) {
+  return raw === "beta" ? "beta" : "stable";
+}
+
+function getUpdaterPrefsPath() {
+  return path.join(app.getPath("userData"), "updater-prefs.json");
+}
+
+function loadUpdaterPrefs() {
+  try {
+    const raw = fs.readFileSync(getUpdaterPrefsPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.autoDownload === "boolean") {
+      updaterState.autoDownload = parsed.autoDownload;
+    }
+    if (parsed.channel === "beta" || parsed.channel === "stable") {
+      updaterState.channel = parsed.channel;
+    }
+  } catch {
+    // Use default stable channel + autoDownload on first launch.
+  }
+}
+
+function saveUpdaterPrefs() {
+  try {
+    const prefsPath = getUpdaterPrefsPath();
+    fs.mkdirSync(path.dirname(prefsPath), { recursive: true });
+    fs.writeFileSync(
+      prefsPath,
+      JSON.stringify(
+        {
+          channel: updaterState.channel,
+          autoDownload: updaterState.autoDownload,
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+  } catch {
+    // Best-effort preference persistence.
+  }
+}
 
 function emitUpdateState(patch = {}) {
   Object.assign(updaterState, patch, { currentVersion: app.getVersion() });
@@ -283,7 +329,34 @@ function parseSemverParts(version) {
   const cleaned = String(version || "0.0.0").trim().replace(/^[vV]/, "");
   const [core, ...preParts] = cleaned.split("-");
   const [maj, min, pat] = core.split(".").map((n) => Number.parseInt(n, 10) || 0);
-  return { major: maj || 0, minor: min || 0, patch: pat || 0, prerelease: preParts.join("-") };
+  const preStr = preParts.join("-");
+  return {
+    major: maj || 0,
+    minor: min || 0,
+    patch: pat || 0,
+    prerelease: preStr ? preStr.split(".") : [],
+  };
+}
+
+function comparePrereleaseIdentifiers(aParts, bParts) {
+  const len = Math.max(aParts.length, bParts.length);
+  for (let i = 0; i < len; i++) {
+    const aId = aParts[i];
+    const bId = bParts[i];
+    if (aId === undefined) return 1;
+    if (bId === undefined) return -1;
+    if (aId === bId) continue;
+
+    const aNum = /^\d+$/.test(aId);
+    const bNum = /^\d+$/.test(bId);
+    if (aNum && bNum) {
+      return Number.parseInt(bId, 10) - Number.parseInt(aId, 10);
+    }
+    if (aNum && !bNum) return 1;
+    if (!aNum && bNum) return -1;
+    return bId.localeCompare(aId);
+  }
+  return 0;
 }
 
 function compareSemver(current, latest) {
@@ -292,9 +365,20 @@ function compareSemver(current, latest) {
   if (a.major !== b.major) return b.major - a.major;
   if (a.minor !== b.minor) return b.minor - a.minor;
   if (a.patch !== b.patch) return b.patch - a.patch;
-  if (a.prerelease && !b.prerelease) return 1;
-  if (!a.prerelease && b.prerelease) return -1;
-  return b.prerelease.localeCompare(a.prerelease);
+  if (a.prerelease.length > 0 && b.prerelease.length === 0) return 1;
+  if (a.prerelease.length === 0 && b.prerelease.length > 0) return -1;
+  return comparePrereleaseIdentifiers(a.prerelease, b.prerelease);
+}
+
+function pickHighestSemverRelease(releases) {
+  let best = null;
+  for (const item of Array.isArray(releases) ? releases : []) {
+    if (!item || item.draft || !item.tag_name) continue;
+    if (!best || compareSemver(best.tag_name, item.tag_name) > 0) {
+      best = item;
+    }
+  }
+  return best;
 }
 
 function normalizeRepoSlug(raw) {
@@ -429,6 +513,7 @@ async function downloadAppUpdate() {
 
 async function checkForAppUpdates(options = {}) {
   const repo = normalizeRepoSlug(options.repo);
+  const channel = normalizeUpdateChannel(options.channel ?? updaterState.channel);
   const triggerAutoDownload =
     options.triggerAutoDownload !== undefined
       ? Boolean(options.triggerAutoDownload)
@@ -436,23 +521,28 @@ async function checkForAppUpdates(options = {}) {
 
   emitUpdateState({
     status: "checking",
-    message: "正在检查更新…",
+    channel,
+    message:
+      channel === "beta" ? "正在检查测试版更新…" : "正在检查更新…",
   });
 
   try {
-    const res = await electronNet.fetch(
-      `https://api.github.com/repos/${repo}/releases/latest`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": `Arbok/${app.getVersion()}`,
-        },
-      }
-    );
+    const endpoint =
+      channel === "beta"
+        ? `https://api.github.com/repos/${repo}/releases?per_page=15`
+        : `https://api.github.com/repos/${repo}/releases/latest`;
+    const res = await electronNet.fetch(endpoint, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": `Arbok/${app.getVersion()}`,
+      },
+    });
 
     if (res.status === 404) {
       return emitUpdateState({
         status: "up-to-date",
+        channel,
+        isPrerelease: false,
         latestVersion: app.getVersion(),
         message: `已经是最新版本（V${app.getVersion()}）`,
       });
@@ -461,27 +551,44 @@ async function checkForAppUpdates(options = {}) {
       throw new Error(`检查更新失败（GitHub 返回 ${res.status}）`);
     }
 
-    const data = await res.json();
+    const raw = await res.json();
+    const data = Array.isArray(raw) ? pickHighestSemverRelease(raw) : raw;
+    if (!data || !data.tag_name) {
+      return emitUpdateState({
+        status: "up-to-date",
+        channel,
+        isPrerelease: false,
+        latestVersion: app.getVersion(),
+        releaseUrl: `https://github.com/${repo}/releases`,
+        message: channel === "beta" ? "已经是最新测试版" : "已经是最新版本",
+      });
+    }
+
     const latestVersion = String(data.tag_name || app.getVersion()).replace(/^[vV]/, "");
+    const isPrerelease = Boolean(data.prerelease) || latestVersion.includes("-");
     const cmp = compareSemver(app.getVersion(), latestVersion);
     if (cmp <= 0) {
       return emitUpdateState({
         status: "up-to-date",
+        channel,
+        isPrerelease,
         latestVersion,
         releaseUrl: data.html_url || `https://github.com/${repo}/releases`,
-        message: "已经是最新版本",
+        message: channel === "beta" ? "已经是最新测试版" : "已经是最新版本",
       });
     }
 
     const asset = pickBestMacAsset(data.assets);
     emitUpdateState({
       status: "available",
+      channel,
+      isPrerelease,
       latestVersion,
       releaseUrl: data.html_url || `https://github.com/${repo}/releases`,
       downloadUrl: asset?.browser_download_url || null,
       assetName: asset?.name || null,
       totalBytes: Number(asset?.size || 0),
-      message: `发现新版本 V${latestVersion}（当前 V${app.getVersion()}）`,
+      message: `发现新${isPrerelease ? "测试版" : "版本"} V${latestVersion}（当前 V${app.getVersion()}）`,
     });
 
     if (triggerAutoDownload && asset?.browser_download_url) {
@@ -491,6 +598,7 @@ async function checkForAppUpdates(options = {}) {
   } catch (err) {
     return emitUpdateState({
       status: "error",
+      channel,
       message:
         err instanceof Error
           ? `检查更新失败：${err.message}`
@@ -635,11 +743,13 @@ function installDownloadedUpdate({ relaunch = true } = {}) {
 }
 
 function setupAutoUpdater() {
+  loadUpdaterPrefs();
   if (!app.isPackaged) return;
   setTimeout(() => {
     if (updaterState.autoDownload) {
       void checkForAppUpdates({
         repo: DEFAULT_OTA_REPO,
+        channel: updaterState.channel,
         triggerAutoDownload: true,
       });
     }
@@ -653,11 +763,45 @@ ipcMain.handle("arbok:set-auto-download", (_event, enabled) => {
   if (autoUpdater) {
     autoUpdater.autoDownload = updaterState.autoDownload;
   }
+  saveUpdaterPrefs();
   return updaterState.autoDownload;
 });
-ipcMain.handle("arbok:check-update", async (_event, repo) => {
+ipcMain.handle("arbok:set-update-channel", (_event, channel) => {
+  const next = normalizeUpdateChannel(channel);
+  const changed = updaterState.channel !== next;
+  updaterState.channel = next;
+  saveUpdaterPrefs();
+  if (changed && updaterState.status !== "downloading" && updaterState.status !== "installing") {
+    emitUpdateState({
+      status: "idle",
+      channel: next,
+      isPrerelease: false,
+      latestVersion: null,
+      downloadUrl: null,
+      assetName: null,
+      downloadedFilePath: null,
+      percent: 0,
+      transferredBytes: 0,
+      totalBytes: 0,
+      message: "",
+    });
+  }
+  return updaterState.channel;
+});
+ipcMain.handle("arbok:check-update", async (_event, payload) => {
+  const repo =
+    typeof payload === "string"
+      ? payload
+      : typeof payload?.repo === "string"
+        ? payload.repo
+        : DEFAULT_OTA_REPO;
+  const channel =
+    payload && typeof payload === "object" && payload.channel
+      ? normalizeUpdateChannel(payload.channel)
+      : updaterState.channel;
   return await checkForAppUpdates({
-    repo: typeof repo === "string" ? repo : DEFAULT_OTA_REPO,
+    repo,
+    channel,
     triggerAutoDownload: updaterState.autoDownload,
   });
 });

@@ -102,6 +102,7 @@ import {
 } from "@/lib/arbok/providers";
 import { UI_LANGUAGE_OPTIONS, getUiCopy } from "@/lib/arbok/i18n";
 import { computeOverlayFontPx } from "@/lib/arbok/tts-sync";
+import { APP_VERSION } from "@/lib/arbok/version";
 import { ArbokLogo } from "./arbok-icons";
 import { ProviderIcon } from "./provider-icons";
 import type {
@@ -123,6 +124,7 @@ import type {
   ThemeMode,
   TtsEngine,
   UiLanguage,
+  UpdateChannel,
   UpdateCheckResult,
   VideoSubtitleStyle,
 } from "./types";
@@ -309,6 +311,8 @@ export function SettingsDialog({
       | "error";
     currentVersion?: string;
     latestVersion?: string | null;
+    channel?: UpdateChannel;
+    isPrerelease?: boolean;
     downloadUrl?: string | null;
     releaseUrl?: string | null;
     percent?: number;
@@ -320,9 +324,12 @@ export function SettingsDialog({
   type ArbokDesktopBridge = {
     isDesktop?: boolean;
     getUpdateState?: () => Promise<NonNullable<typeof desktopUpdate>>;
-    checkForUpdates?: (repo?: string) => Promise<NonNullable<typeof desktopUpdate>>;
+    checkForUpdates?: (
+      options?: string | { repo?: string; channel?: UpdateChannel }
+    ) => Promise<NonNullable<typeof desktopUpdate>>;
     downloadUpdate?: () => Promise<NonNullable<typeof desktopUpdate>>;
     setAutoDownload?: (enabled: boolean) => Promise<boolean>;
+    setUpdateChannel?: (channel: UpdateChannel) => Promise<UpdateChannel>;
     quitAndInstall?: () => Promise<{ ok: boolean; error?: string }>;
     onUpdateEvent?: (
       listener: (payload: NonNullable<typeof desktopUpdate>) => void
@@ -339,6 +346,7 @@ export function SettingsDialog({
     const bridge = getDesktopBridge();
     if (!bridge?.isDesktop) return;
     void bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
+    void bridge.setUpdateChannel?.(settings.updateChannel ?? "stable");
     void bridge
       .getUpdateState?.()
       .then((state) => {
@@ -353,20 +361,23 @@ export function SettingsDialog({
     return () => {
       unsubscribe?.();
     };
-  }, [settings.autoDownloadUpdates]);
+  }, [settings.autoDownloadUpdates, settings.updateChannel]);
 
   async function handleCheckUpdates() {
     setCheckingUpdate(true);
     const repo = settings.otaRepo || "luqiming19820311/Arbok1";
+    const channel: UpdateChannel = settings.updateChannel ?? "stable";
     const bridge = getDesktopBridge();
     if (bridge?.isDesktop && bridge.checkForUpdates) {
       try {
         await bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
-        const state = await bridge.checkForUpdates(repo);
+        await bridge.setUpdateChannel?.(channel);
+        const state = await bridge.checkForUpdates({ repo, channel });
         if (state) setDesktopUpdate(state);
       } catch {
         setDesktopUpdate({
           status: "error",
+          channel,
           message: "检查更新失败，请检查网络连接或代理设置",
         });
       } finally {
@@ -379,17 +390,18 @@ export function SettingsDialog({
       const res = await fetch("/api/updates/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo }),
+        body: JSON.stringify({ repo, channel }),
       });
       const data = (await res.json()) as UpdateCheckResult;
       setUpdateCheckResult(data);
     } catch {
       setUpdateCheckResult({
         status: "up-to-date",
-        currentVersion: "0.2.1",
-        latestVersion: "0.2.1",
+        currentVersion: APP_VERSION,
+        latestVersion: APP_VERSION,
+        channel,
         repo,
-        message: "已经是最新版本",
+        message: channel === "beta" ? "已经是最新测试版" : "已经是最新版本",
       });
     } finally {
       setCheckingUpdate(false);
@@ -3098,11 +3110,16 @@ export function SettingsDialog({
                 ? repoSlug.replace(/\/+$/, "")
                 : `https://github.com/${repoSlug}`;
               const ownerUrl = "https://github.com/luqiming19820311";
+              const updateChannel: UpdateChannel = settings.updateChannel ?? "stable";
+              const isBetaChannel = updateChannel === "beta";
               const isDesktop = Boolean(getDesktopBridge()?.isDesktop);
               const isDownloadingUpdate = desktopUpdate?.status === "downloading";
               const isDownloadedUpdate = desktopUpdate?.status === "downloaded";
               const isInstallingUpdate = desktopUpdate?.status === "installing";
               const isAvailableDesktop = desktopUpdate?.status === "available";
+              const activeIsPrerelease = Boolean(
+                desktopUpdate?.isPrerelease || updateCheckResult?.isPrerelease
+              );
               const activeError =
                 desktopUpdate?.status === "error" ||
                 updateCheckResult?.status === "error";
@@ -3119,7 +3136,9 @@ export function SettingsDialog({
                     ? "var(--arbok-accent-text)"
                     : "var(--status-ok-fg)";
               const updateStatusText = checkingUpdate
-                ? "正在检查 GitHub Releases 更新…"
+                ? isBetaChannel
+                  ? "正在检查测试版更新…"
+                  : "正在检查 GitHub Releases 更新…"
                 : desktopUpdate && desktopUpdate.status !== "idle"
                   ? desktopUpdate.message || "已经是最新版本"
                   : updateCheckResult?.message ?? "已经是最新版本";
@@ -3137,13 +3156,24 @@ export function SettingsDialog({
                       <ArbokLogo size={56} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-baseline gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-lg font-bold tracking-tight text-[var(--ui-foreground)]">
                           Arbok
                         </span>
                         <span className="tabular-nums text-xs text-[var(--ui-muted-foreground)]">
-                          版本 V0.2.1
+                          版本 V{APP_VERSION}
                         </span>
+                        {(APP_VERSION.includes("-") || isBetaChannel) && (
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+                            style={{
+                              background: "var(--arbok-accent-soft)",
+                              color: "var(--arbok-accent-text)",
+                            }}
+                          >
+                            {APP_VERSION.includes("-") ? "Beta" : "Beta 通道"}
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
                         支持 YouTube、哔哩哔哩、播客，配中文字幕、翻译和播报、AI 导读、AI 问答、笔记等功能。
@@ -3154,6 +3184,17 @@ export function SettingsDialog({
                         style={{ color: updateStatusColor }}
                       >
                         <span>{updateStatusText}</span>
+                        {activeIsPrerelease && activeAvailable && (
+                          <span
+                            className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                            style={{
+                              background: "var(--status-warn-bg)",
+                              color: "var(--status-warn-fg)",
+                            }}
+                          >
+                            测试版
+                          </span>
+                        )}
                         {isDesktop && isAvailableDesktop && (
                           <Button
                             data-variant="solid"
@@ -3219,24 +3260,61 @@ export function SettingsDialog({
                           </Progress>
                         </div>
                       )}
-                      <label className="mt-2.5 inline-flex cursor-pointer items-center gap-2 text-xs text-[var(--ui-foreground)] select-none">
-                        <Checkbox
-                          checked={settings.autoDownloadUpdates ?? true}
-                          onCheckedChange={(next) => {
-                            const enabled = next === true;
-                            onUpdateSettings({
-                              autoDownloadUpdates: enabled,
-                            });
-                            void getDesktopBridge()?.setAutoDownload?.(enabled);
-                          }}
-                          className="arbok-cli-checkbox"
-                        >
-                          <CheckboxIndicator>
-                            <CheckIcon className="size-3" aria-hidden="true" />
-                          </CheckboxIndicator>
-                        </Checkbox>
-                        <span>自动下载新版本，重启后生效</span>
-                      </label>
+                      <div className="mt-2.5 flex flex-col gap-2">
+                        <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-xs text-[var(--ui-foreground)] select-none">
+                          <Checkbox
+                            aria-label="自动下载新版本，重启后生效"
+                            checked={settings.autoDownloadUpdates ?? true}
+                            onCheckedChange={(next) => {
+                              const enabled = next === true;
+                              onUpdateSettings({
+                                autoDownloadUpdates: enabled,
+                              });
+                              void getDesktopBridge()?.setAutoDownload?.(enabled);
+                            }}
+                            className="arbok-cli-checkbox"
+                          >
+                            <CheckboxIndicator>
+                              <CheckIcon className="size-3" aria-hidden="true" />
+                            </CheckboxIndicator>
+                          </Checkbox>
+                          <span>自动下载新版本，重启后生效</span>
+                        </label>
+                        <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-xs text-[var(--ui-foreground)] select-none">
+                          <Checkbox
+                            aria-label="接收测试版更新（Beta）"
+                            checked={isBetaChannel}
+                            onCheckedChange={(next) => {
+                              const nextChannel: UpdateChannel =
+                                next === true ? "beta" : "stable";
+                              onUpdateSettings({
+                                updateChannel: nextChannel,
+                              });
+                              setUpdateCheckResult(null);
+                              if (
+                                desktopUpdate?.status !== "downloading" &&
+                                desktopUpdate?.status !== "installing"
+                              ) {
+                                setDesktopUpdate(null);
+                              }
+                              void getDesktopBridge()?.setUpdateChannel?.(
+                                nextChannel
+                              );
+                            }}
+                            className="arbok-cli-checkbox"
+                          >
+                            <CheckboxIndicator>
+                              <CheckIcon className="size-3" aria-hidden="true" />
+                            </CheckboxIndicator>
+                          </Checkbox>
+                          <span>接收测试版更新（Beta）</span>
+                          <span className="text-[11px] text-[var(--ui-muted-foreground)]">
+                            {isBetaChannel
+                              ? "当前：测试版通道，可提前体验 Pre-release"
+                              : "当前：正式版通道"}
+                          </span>
+                        </label>
+                      </div>
                     </div>
                   </div>
 
@@ -3289,7 +3367,11 @@ export function SettingsDialog({
                           GitHub OTA 自动升级源
                         </div>
                         <div className="tabular-nums mt-0.5 truncate text-xs text-[var(--ui-muted-foreground)]">
-                          {repoUrl.replace(/^https?:\/\//i, "")} · 自动检测并静默下载更新
+                          {repoUrl.replace(/^https?:\/\//i, "")} ·{" "}
+                          {isBetaChannel
+                            ? "测试版通道 (Beta / Pre-release)"
+                            : "正式版通道 (Stable)"}{" "}
+                          · 自动检测并静默下载更新
                         </div>
                       </div>
                     </div>
@@ -3322,7 +3404,7 @@ export function SettingsDialog({
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-border)] pt-3 text-[11px] text-[var(--ui-muted-foreground)]">
-                    <span>Arbok V0.2.1 · 本地优先 · 数据与凭据均存本机</span>
+                    <span>Arbok V{APP_VERSION} · 本地优先 · 数据与凭据均存本机</span>
                     <span>GitHub Releases OTA · luqiming19820311</span>
                   </div>
                 </div>
