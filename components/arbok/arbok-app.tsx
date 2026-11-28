@@ -15,6 +15,7 @@ import {
   SegmentedControlItem,
 } from "@ui-sdk/react/segmented-control";
 import { Separator } from "@ui-sdk/react/separator";
+import { Toggle } from "@ui-sdk/react/toggle";
 import {
   Toast,
   ToastDescription,
@@ -23,18 +24,26 @@ import {
   createToaster,
 } from "@ui-sdk/react/toast";
 import {
+  ArrowUpDownIcon,
   BookmarkIcon,
+  CheckCheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CircleDotIcon,
   DownloadIcon,
   FolderIcon,
   InboxIcon,
   ListFilterIcon,
+  Maximize2Icon,
   MoonIcon,
   PanelLeftIcon,
+  PauseIcon,
   PlayCircleIcon,
+  PlayIcon,
   PlusIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
+  RotateCwIcon,
   SearchIcon,
   SunIcon,
   UploadIcon,
@@ -51,12 +60,27 @@ import {
   getDefaultLocalAiCliConfig,
   getLlmPreset,
   isLocalAiProviderId,
+  migrateLegacyCloudAsrSettings,
 } from "@/lib/arbok/providers";
+import {
+  EMPTY_DATE_FILTER,
+  isEpisodeRead,
+  matchesEpisodeFilters,
+  sortEpisodesByDate,
+  type ChannelDateFilter,
+  type EpisodeSortOrder,
+  type EpisodeStatusFilter,
+} from "@/lib/arbok/episode-filters";
 import { getUiCopy, resolveUiLocale } from "@/lib/arbok/i18n";
-import { canResumePausedTtsAudio, evaluateTtsSync } from "@/lib/arbok/tts-sync";
+import {
+  canResumePausedTtsAudio,
+  computeOverlayFontPx,
+  evaluateTtsSync,
+} from "@/lib/arbok/tts-sync";
 import { AddSourceDialog } from "./add-source-dialog";
 import { initArbokAgentBridge } from "./agent-bridge";
 import { ArbokLogo } from "./arbok-icons";
+import { ChannelHeaderPanel } from "./channel-header-panel";
 import { ExportMarkdownDialog } from "./export-markdown-dialog";
 import { FavoritesView } from "./favorites-view";
 import { HomeFeed } from "./home-feed";
@@ -78,6 +102,7 @@ import {
 } from "./mock-data";
 import { SettingsDialog } from "./settings-dialog";
 import {
+  YouTubeHdPlayer,
   extractYouTubeVideoId,
   type YouTubeHdPlayerHandle,
 } from "./youtube-hd-player";
@@ -192,6 +217,18 @@ export function ArbokApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeNav, setActiveNav] = useState<string>("inbox");
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<EpisodeStatusFilter>("all");
+  const [sortOrder, setSortOrder] = useState<EpisodeSortOrder>("newest");
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [channelDateFilter, setChannelDateFilter] =
+    useState<ChannelDateFilter>(EMPTY_DATE_FILTER);
+  const [refreshingChannelId, setRefreshingChannelId] = useState<string | null>(
+    null
+  );
+  const [listPipOffset, setListPipOffset] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
   const [listSearch, setListSearch] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "player">("list");
 
@@ -378,7 +415,10 @@ export function ArbokApp() {
         }
         if (Array.isArray(data.notes)) setNotes(data.notes);
         if (data.settings) {
-          const merged = { ...DEFAULT_APP_SETTINGS, ...data.settings };
+          const merged = migrateLegacyCloudAsrSettings({
+            ...DEFAULT_APP_SETTINGS,
+            ...data.settings,
+          });
           // Migrate legacy removed xiaomi-mimo-cn and old Qwen compatible-mode TTS URLs.
           if ((merged.cloudTtsProvider as string) === "xiaomi-mimo-cn") {
             merged.cloudTtsProvider = "xiaomi-mimo";
@@ -521,10 +561,13 @@ export function ArbokApp() {
       ? extractYouTubeVideoId(currentEpisode.externalId, currentEpisode.pageUrl)
       : null;
 
+  const isVideoSurfaceVisible =
+    viewMode === "player" || (pipActive && pipMode === "floating");
+
   const useYouTubeHd =
     hydrated &&
     isBrowserBackendEnabled() &&
-    viewMode === "player" &&
+    isVideoSurfaceVisible &&
     currentEpisode.mediaType === "video" &&
     !audioOnly &&
     !(currentEpisode.isOffline && currentEpisode.localFilePath) &&
@@ -536,7 +579,7 @@ export function ArbokApp() {
   const useVideoElement =
     hydrated &&
     isBrowserBackendEnabled() &&
-    viewMode === "player" &&
+    isVideoSurfaceVisible &&
     currentEpisode.mediaType === "video" &&
     !audioOnly &&
     !currentIsDemoPlaceholder &&
@@ -1304,6 +1347,16 @@ export function ArbokApp() {
 
   function handleMediaEnded() {
     setIsBuffering(false);
+    setEpisodes((prev) =>
+      prev.map((ep) => (ep.id === currentEpId ? { ...ep, isRead: true } : ep))
+    );
+    if (isBrowserBackendEnabled()) {
+      void fetch(`/api/episodes/${encodeURIComponent(currentEpId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isRead: true }),
+      }).catch(() => {});
+    }
     const nextQueuedId = playQueue.find((id) =>
       episodes.some((e) => e.id === id)
     );
@@ -1882,6 +1935,85 @@ export function ArbokApp() {
     }
   }
 
+  function handleToggleRead(epId: string) {
+    const target = episodes.find((e) => e.id === epId);
+    if (!target) return;
+    const nextRead = !isEpisodeRead(target);
+    setEpisodes((prev) =>
+      prev.map((ep) => (ep.id === epId ? { ...ep, isRead: nextRead } : ep))
+    );
+    if (isBrowserBackendEnabled()) {
+      void fetch(`/api/episodes/${encodeURIComponent(epId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isRead: nextRead }),
+      }).catch(() => {});
+    }
+    toaster.info(
+      nextRead ? `已标记为已读「${target.title}」` : `已标记为未读「${target.title}」`
+    );
+  }
+
+  function handleMarkAllRead() {
+    const scope = episodes.filter((ep) => {
+      if (activeNav === "inbox") {
+        if (platformFilter === "podcast") {
+          return ep.platform === "podcast" || ep.platform === "xiaoyuzhou";
+        }
+        if (platformFilter !== "all") {
+          return ep.platform === platformFilter;
+        }
+        return true;
+      }
+      if (subscriptions.some((s) => s.id === activeNav)) {
+        return ep.subId === activeNav;
+      }
+      return false;
+    });
+    const unreadIds = scope.filter((ep) => !isEpisodeRead(ep)).map((ep) => ep.id);
+    if (unreadIds.length === 0) {
+      toaster.info("当前页面单集已全部为已读");
+      return;
+    }
+    const idSet = new Set(unreadIds);
+    setEpisodes((prev) =>
+      prev.map((ep) => (idSet.has(ep.id) ? { ...ep, isRead: true } : ep))
+    );
+    if (isBrowserBackendEnabled()) {
+      void fetch("/api/episodes", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: unreadIds, isRead: true }),
+      }).catch(() => {});
+    }
+    toaster.success(`已将 ${unreadIds.length} 期单集标记为已读`);
+  }
+
+  function handleStartListPipDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement)?.closest("button")) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originX = listPipOffset.x;
+    const originY = listPipOffset.y;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      setListPipOffset({
+        x: originX + (moveEvent.clientX - startX),
+        y: originY + (moveEvent.clientY - startY),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
   function handlePlayAllFavorites(epIds: string[]) {
     if (epIds.length === 0) return;
     const [firstId, ...restIds] = epIds;
@@ -1920,19 +2052,58 @@ export function ArbokApp() {
     }
   }
 
-  function handleBackToList() {
-    const livePos = getLivePlaybackPosition();
-    armPendingSeek(livePos);
-    setEpisodes((prev) =>
-      prev.map((ep) =>
-        ep.id === currentEpId ? { ...ep, positionSec: livePos } : ep
-      )
-    );
-    flushEpisodePosition(currentEpisode.id, livePos);
-    if (pipActive) {
+  function navigateToListView(nextNav?: string) {
+    const leavingPlayer = viewMode === "player";
+    const shouldAutoPip =
+      leavingPlayer &&
+      isPlaying &&
+      currentEpisode.mediaType === "video" &&
+      !audioOnly;
+
+    if (leavingPlayer) {
+      const livePos = getLivePlaybackPosition();
+      armPendingSeek(livePos);
+      setEpisodes((prev) =>
+        prev.map((ep) =>
+          ep.id === currentEpId ? { ...ep, positionSec: livePos } : ep
+        )
+      );
+      flushEpisodePosition(currentEpisode.id, livePos);
+    }
+
+    if (shouldAutoPip) {
+      if (pipActive && pipMode === "desktop") {
+        const desktopApi = (
+          window as unknown as {
+            arbokDesktop?: { setPipMode?: (enabled: boolean) => Promise<boolean> };
+          }
+        ).arbokDesktop;
+        if (desktopApi?.setPipMode) {
+          void desktopApi.setPipMode(false).catch(() => {});
+        }
+      }
+      if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+        docPipWindowRef.current.close();
+        docPipWindowRef.current = null;
+        setDocPipContainer(null);
+      }
+      setPipMode("floating");
+      setPipActive(true);
+    } else if (leavingPlayer && pipActive) {
       void handleTogglePip(false);
     }
+
+    if (nextNav !== undefined) {
+      if (nextNav !== activeNav) {
+        setChannelDateFilter(EMPTY_DATE_FILTER);
+      }
+      setActiveNav(nextNav);
+    }
     setViewMode("list");
+  }
+
+  function handleBackToList() {
+    navigateToListView();
   }
 
   async function handleFetchOfficialSubtitles(epId: string, force = false) {
@@ -2038,6 +2209,10 @@ export function ArbokApp() {
       );
     }
     setCurrentEpId(epId);
+    if (viewMode === "list" && pipActive && pipMode === "floating") {
+      setPipActive(false);
+      setPipMode("none");
+    }
     setViewMode("player");
     setAudioOnly(false);
     if (switching) {
@@ -2733,6 +2908,50 @@ export function ArbokApp() {
       }
     } catch (err) {
       toaster.error(err instanceof Error ? err.message : "刷新订阅源失败");
+    }
+  }
+
+  async function handleRefreshChannel(subId: string) {
+    const targetSub = subscriptions.find((s) => s.id === subId);
+    if (!targetSub) return;
+    if (!isBrowserBackendEnabled()) {
+      toaster.success(`已检查「${targetSub.name}」最新单集`);
+      return;
+    }
+    setRefreshingChannelId(subId);
+    try {
+      const res = await fetch("/api/subscriptions/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId: subId }),
+      });
+      const data = (await res.json()) as {
+        refreshedSources?: number;
+        newEpisodes?: number;
+        errors?: string[];
+        subscriptions?: Subscription[];
+        episodes?: Episode[];
+        error?: string;
+      };
+      if (!res.ok) {
+        toaster.error(data.error ?? "检查更新失败");
+        return;
+      }
+      if (Array.isArray(data.subscriptions)) setSubscriptions(data.subscriptions);
+      if (Array.isArray(data.episodes)) setEpisodes(data.episodes);
+      if (data.errors && data.errors.length > 0) {
+        toaster.warning(data.errors[0]);
+      } else if ((data.refreshedSources ?? 0) === 0) {
+        toaster.info("当前频道为示例源，添加真实链接后可同步最新内容");
+      } else {
+        toaster.success(
+          `「${targetSub.name}」已更新，新增 ${data.newEpisodes ?? 0} 期单集`
+        );
+      }
+    } catch (err) {
+      toaster.error(err instanceof Error ? err.message : "检查更新失败");
+    } finally {
+      setRefreshingChannelId((cur) => (cur === subId ? null : cur));
     }
   }
 
@@ -3779,6 +3998,22 @@ export function ArbokApp() {
     toaster.info("已删除该条笔记");
   }
 
+  const activeSubscription = useMemo(
+    () => subscriptions.find((s) => s.id === activeNav) ?? null,
+    [subscriptions, activeNav]
+  );
+
+  const activeChannelEpisodes = useMemo(
+    () =>
+      activeSubscription
+        ? episodes.filter((e) => e.subId === activeSubscription.id)
+        : [],
+    [episodes, activeSubscription]
+  );
+
+  const showFeedControls =
+    activeNav === "inbox" || Boolean(activeSubscription);
+
   const filteredEpisodes = useMemo(() => {
     let list = episodes;
     if (activeNav === "continue") {
@@ -3801,6 +4036,16 @@ export function ArbokApp() {
       }
     }
 
+    if (showFeedControls) {
+      list = list.filter((e) =>
+        matchesEpisodeFilters(e, {
+          statusFilter,
+          unreadOnly,
+          dateFilter: activeSubscription ? channelDateFilter : undefined,
+        })
+      );
+    }
+
     const q = listSearch.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -3809,8 +4054,23 @@ export function ArbokApp() {
           e.channel.toLowerCase().includes(q)
       );
     }
+
+    if (showFeedControls) {
+      return sortEpisodesByDate(list, sortOrder);
+    }
     return list;
-  }, [episodes, activeNav, platformFilter, listSearch]);
+  }, [
+    episodes,
+    activeNav,
+    platformFilter,
+    listSearch,
+    showFeedControls,
+    statusFilter,
+    unreadOnly,
+    activeSubscription,
+    channelDateFilter,
+    sortOrder,
+  ]);
 
   const starredCount = useMemo(
     () => episodes.filter((e) => Boolean(e.isStarred)).length,
@@ -3964,7 +4224,10 @@ export function ArbokApp() {
   const isInboxHome =
     activeNav === "inbox" &&
     platformFilter === "all" &&
-    listSearch.trim() === "";
+    listSearch.trim() === "" &&
+    !unreadOnly &&
+    statusFilter === "all" &&
+    sortOrder === "newest";
 
   return (
     <div
@@ -4085,8 +4348,7 @@ export function ArbokApp() {
                         data-active={active ? "true" : "false"}
                         className="arbok-nav-button justify-between"
                         onClick={() => {
-                          setActiveNav(item.id);
-                          setViewMode("list");
+                          navigateToListView(item.id);
                         }}
                       >
                         <span className="inline-flex items-center gap-2.5">
@@ -4154,8 +4416,7 @@ export function ArbokApp() {
                           data-active={active ? "true" : "false"}
                           className="arbok-sub-row flex items-center justify-between gap-2.5"
                           onClick={() => {
-                            setActiveNav(sub.id);
-                            setViewMode("list");
+                            navigateToListView(sub.id);
                           }}
                         >
                           <span className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -4588,7 +4849,7 @@ export function ArbokApp() {
             />
           ) : (
             <>
-              <header className="flex h-13 shrink-0 items-center justify-between gap-3 border-b border-[var(--ui-border)] bg-[var(--arbok-surface)]/80 px-6 backdrop-blur-md">
+              <header className="flex min-h-13 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-[var(--ui-border)] bg-[var(--arbok-surface)]/80 px-6 py-2 backdrop-blur-md">
                 <div className="flex min-w-0 items-center gap-3">
                   {sidebarCollapsed && (
                     <Button
@@ -4642,9 +4903,56 @@ export function ArbokApp() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {showFeedControls && (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        aria-label="切换排序方式"
+                        title={
+                          sortOrder === "newest"
+                            ? "当前：最新在前，点击切换为最早在前"
+                            : "当前：最早在前，点击切换为最新在前"
+                        }
+                        className="h-8 gap-1 border-transparent bg-transparent px-2 text-xs text-[var(--ui-muted-foreground)] hover:bg-[var(--ui-muted)] hover:text-[var(--ui-foreground)]"
+                        onClick={() =>
+                          setSortOrder((prev) =>
+                            prev === "newest" ? "oldest" : "newest"
+                          )
+                        }
+                      >
+                        <ArrowUpDownIcon className="size-3.5" aria-hidden="true" />
+                        <span>{sortOrder === "newest" ? "最新在前" : "最早在前"}</span>
+                      </Button>
+
+                      <SegmentedControl
+                        aria-label="按观看状态筛选"
+                        value={statusFilter}
+                        onValueChange={(next) => {
+                          if (
+                            next === "all" ||
+                            next === "unfinished" ||
+                            next === "watched" ||
+                            next === "subtitled"
+                          ) {
+                            setStatusFilter(next);
+                          }
+                        }}
+                      >
+                        <SegmentedControlIndicator />
+                        <SegmentedControlItem value="all">全部</SegmentedControlItem>
+                        <SegmentedControlItem value="unfinished">
+                          未看完
+                        </SegmentedControlItem>
+                        <SegmentedControlItem value="watched">已看</SegmentedControlItem>
+                        <SegmentedControlItem value="subtitled">
+                          有字幕
+                        </SegmentedControlItem>
+                      </SegmentedControl>
+                    </div>
+                  )}
+
                   {activeNav !== "notes" && (
-                    <InputGroup className="w-56">
+                    <InputGroup className={showFeedControls ? "w-44 xl:w-52" : "w-56"}>
                       <SearchIcon
                         className="ml-2.5 size-3.5 text-[var(--ui-muted-foreground)]"
                         aria-hidden="true"
@@ -4669,6 +4977,27 @@ export function ArbokApp() {
                     <RefreshCwIcon className="size-3.5" aria-hidden="true" />
                     <span>刷新订阅</span>
                   </Button>
+                  {showFeedControls && (
+                    <div className="flex items-center gap-1">
+                      <Toggle
+                        aria-label="仅显示未读"
+                        title={unreadOnly ? "正在仅显示未读（点击显示全部）" : "仅显示未读"}
+                        pressed={unreadOnly}
+                        onPressedChange={setUnreadOnly}
+                        className="size-8 rounded-lg border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-0 text-[var(--ui-muted-foreground)] hover:bg-[var(--ui-muted)] hover:text-[var(--ui-foreground)] data-pressed:border-[var(--arbok-accent-border)] data-pressed:bg-[var(--arbok-accent-soft)] data-pressed:text-[var(--arbok-accent-text)]"
+                      >
+                        <CircleDotIcon className="size-4" aria-hidden="true" />
+                      </Toggle>
+                      <Button
+                        aria-label="标记全部为已读"
+                        title="标记全部为已读"
+                        className="size-8 rounded-lg border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-0 text-[var(--ui-muted-foreground)] hover:bg-[var(--ui-muted)] hover:text-[var(--ui-foreground)]"
+                        onClick={handleMarkAllRead}
+                      >
+                        <CheckCheckIcon className="size-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </header>
 
@@ -4817,6 +5146,34 @@ export function ArbokApp() {
                           allEpisodes={episodes}
                           subscriptions={subscriptions}
                           recommendedShows={syncedRecommendedShows}
+                          channelHeader={
+                            activeSubscription ? (
+                              <ChannelHeaderPanel
+                                subscription={activeSubscription}
+                                channelEpisodes={activeChannelEpisodes}
+                                filteredCount={filteredEpisodes.length}
+                                dateFilter={channelDateFilter}
+                                refreshing={
+                                  refreshingChannelId === activeSubscription.id
+                                }
+                                onDateFilterChange={setChannelDateFilter}
+                                onRefreshChannel={(subId) =>
+                                  void handleRefreshChannel(subId)
+                                }
+                                onPlayAll={() => {
+                                  const ids = filteredEpisodes.map((e) => e.id);
+                                  if (ids.length === 0) return;
+                                  const [firstId, ...restIds] = ids;
+                                  persistPlayQueue(restIds);
+                                  openEpisode(firstId);
+                                  setIsPlaying(true);
+                                  toaster.success(
+                                    `开始播放「${activeSubscription.name}」（共 ${ids.length} 期）`
+                                  );
+                                }}
+                              />
+                            ) : undefined
+                          }
                           subscribingRecId={subscribingRecId}
                           showRecommendations={settings.showRecommendations ?? true}
                           keepOriginalShowNames={Boolean(
@@ -4824,11 +5181,14 @@ export function ArbokApp() {
                           )}
                           uiLanguage={settings.uiLanguage}
                           onOpenEpisode={(id) => openEpisode(id)}
+                          onToggleRead={handleToggleRead}
+                          onToggleStarred={handleToggleStarred}
                           onContinueHero={() => {
                             openEpisode(currentEpisode.id);
                             setIsPlaying(true);
                           }}
                           onSelectSubscription={(subId) => {
+                            setChannelDateFilter(EMPTY_DATE_FILTER);
                             setActiveNav(subId);
                             setPlatformFilter("all");
                           }}
@@ -4853,6 +5213,218 @@ export function ArbokApp() {
           )}
         </main>
       </div>
+
+      {viewMode === "list" &&
+        pipActive &&
+        pipMode === "floating" &&
+        currentEpisode.mediaType === "video" &&
+        !audioOnly &&
+        (() => {
+          const activeSeg =
+            currentVideoSegIdx >= 0
+              ? currentEpisode.transcript[currentVideoSegIdx]
+              : null;
+          const canBilingual = currentEpisode.transcript.length > 0;
+          const overlayZhPx = computeOverlayFontPx(
+            settings.subtitleZhFontSize ?? 50,
+            "zh"
+          );
+          const overlayOrigPx = computeOverlayFontPx(
+            settings.subtitleOrigFontSize ?? 50,
+            "orig"
+          );
+          const pipZhPx = Math.max(13, Math.min(Math.round(overlayZhPx * 0.52), 22));
+          const pipOrigPx = Math.max(11, Math.min(Math.round(overlayOrigPx * 0.52), 17));
+          const overlayStyleClass =
+            settings.videoSubtitleStyle === "outline"
+              ? "arbok-sub-overlay-outline"
+              : settings.videoSubtitleStyle === "none"
+                ? "arbok-sub-overlay-none"
+                : "arbok-sub-overlay-translucent";
+          const fontClass =
+            settings.subtitleFontFamily === "lxgw" ? "arbok-font-lxgw" : "";
+
+          return (
+            <div
+              data-testid="pip-stage"
+              aria-label="画中画悬浮播放器"
+              className="fixed right-5 bottom-[84px] z-40 w-[420px] max-w-[calc(100vw-2rem)] rounded-2xl bg-[#18181b] p-1.5 shadow-2xl ring-1 ring-white/15"
+              style={{
+                transform: `translate3d(${listPipOffset.x}px, ${listPipOffset.y}px, 0)`,
+              }}
+            >
+              <div
+                className="group/pip relative flex aspect-video w-full flex-col justify-between overflow-hidden rounded-xl p-2.5 text-white"
+                style={{
+                  background:
+                    youtubeVideoId || videoStreamUrl
+                      ? "#09090b"
+                      : currentEpisode.gradient,
+                }}
+              >
+                {youtubeVideoId ? (
+                  <YouTubeHdPlayer
+                    ref={ytPlayerRef}
+                    videoId={youtubeVideoId}
+                    initialTimeSec={currentEpisode.positionSec}
+                    isPlaying={isPlaying}
+                    playbackRate={playbackRate}
+                    volume={effectiveMediaVolume}
+                    preferredQuality={videoQuality}
+                    onTimeUpdate={(sec) => {
+                      if (Math.abs(sec - lastReportedPosRef.current) < 0.25) return;
+                      lastReportedPosRef.current = sec;
+                      setEpisodes((prev) =>
+                        prev.map((ep) =>
+                          ep.id === currentEpId ? { ...ep, positionSec: sec } : ep
+                        )
+                      );
+                    }}
+                    onDurationReady={(dur) => {
+                      setEpisodes((prev) =>
+                        prev.map((ep) =>
+                          ep.id === currentEpId &&
+                          Math.abs(ep.durationSec - dur) > 3
+                            ? { ...ep, durationSec: dur }
+                            : ep
+                        )
+                      );
+                    }}
+                    onPlayingChange={(playing) => setIsPlaying(playing)}
+                    onBufferingChange={(buffering) => setIsBuffering(buffering)}
+                    onActualQualityChange={(q, maxQ) => {
+                      setActualQuality(q);
+                      setMaxAvailableQuality(maxQ ?? null);
+                    }}
+                    onEnded={handleMediaEnded}
+                    onEmbedUnavailable={() => {
+                      setYtEmbedFallbackEpId(currentEpisode.id);
+                    }}
+                  />
+                ) : (
+                  videoStreamUrl && (
+                    <video
+                      ref={videoRef}
+                      src={videoStreamUrl}
+                      poster={currentEpisode.coverUrl}
+                      playsInline
+                      preload="metadata"
+                      className="absolute inset-0 h-full w-full bg-black object-contain"
+                      onClick={() => setIsPlaying((p) => !p)}
+                      onTimeUpdate={() => handleMediaTimeUpdate(videoRef.current)}
+                      onLoadedMetadata={() =>
+                        handleMediaLoadedMetadata(videoRef.current)
+                      }
+                      onWaiting={() => setIsBuffering(true)}
+                      onCanPlay={() => handleMediaCanPlay(videoRef.current)}
+                      onPlaying={() => handleMediaCanPlay(videoRef.current)}
+                      onEnded={handleMediaEnded}
+                      onError={handleMediaError}
+                    />
+                  )
+                )}
+
+                <div
+                  onPointerDown={handleStartListPipDrag}
+                  className="pointer-events-auto relative z-30 flex cursor-move items-center justify-between gap-2 rounded-lg bg-black/65 px-2.5 py-1.5 opacity-95 backdrop-blur-md transition-opacity"
+                >
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/95">
+                    {currentEpisode.title}
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      aria-label="画中画快退 15 秒"
+                      className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                      onClick={() => handleSkip(-15)}
+                    >
+                      <RotateCcwIcon className="size-3" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      aria-label={isPlaying ? "画中画暂停" : "画中画播放"}
+                      className="size-6 rounded-full border-transparent bg-white/15 p-0 text-white hover:bg-white/25"
+                      onClick={() => setIsPlaying((p) => !p)}
+                    >
+                      {isPlaying ? (
+                        <PauseIcon className="size-3" aria-hidden="true" />
+                      ) : (
+                        <PlayIcon
+                          className="size-3 translate-x-[0.5px]"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </Button>
+                    <Button
+                      aria-label="画中画快进 15 秒"
+                      className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                      onClick={() => handleSkip(15)}
+                    >
+                      <RotateCwIcon className="size-3" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      aria-label="回到播放页"
+                      title="回到播放页"
+                      className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/20"
+                      onClick={() => openEpisode(currentEpisode.id)}
+                    >
+                      <Maximize2Icon className="size-3" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      aria-label="退出画中画"
+                      title="关闭画中画"
+                      className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/20"
+                      onClick={() => void handleTogglePip(false)}
+                    >
+                      <XIcon className="size-3" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+
+                {!youtubeVideoId && !videoStreamUrl && (
+                  <div className="relative z-10 flex flex-col items-center gap-1 text-center">
+                    <div className="text-sm font-bold tracking-tight">
+                      {currentEpisode.coverLabel}
+                    </div>
+                    <div className="text-[11px] text-white/80">
+                      {isPlaying ? "画中画播放中" : "已暂停"}
+                    </div>
+                  </div>
+                )}
+
+                {subtitleMode !== "none" &&
+                  activeSeg &&
+                  ((canBilingual && subtitleMode !== "orig" && activeSeg.zh) ||
+                    subtitleMode !== "zh") && (
+                    <div
+                      data-testid="video-subtitle-overlay"
+                      className={`pointer-events-none relative z-20 mx-auto max-w-[94%] text-center text-white antialiased ${overlayStyleClass} ${fontClass}`}
+                    >
+                      {canBilingual &&
+                        subtitleMode !== "orig" &&
+                        activeSeg.zh && (
+                          <div
+                            className="font-semibold leading-[1.3] text-white"
+                            style={{ fontSize: `${pipZhPx}px` }}
+                          >
+                            {activeSeg.zh}
+                          </div>
+                        )}
+                      {(!canBilingual ||
+                        !activeSeg.zh ||
+                        subtitleMode !== "zh") && (
+                        <div
+                          translate="no"
+                          className="notranslate mt-0.5 leading-[1.32] text-white/90"
+                          style={{ fontSize: `${pipOrigPx}px` }}
+                        >
+                          {activeSeg.orig}
+                        </div>
+                      )}
+                    </div>
+                  )}
+              </div>
+            </div>
+          );
+        })()}
 
       {viewMode === "list" && (
         <MiniPlayer

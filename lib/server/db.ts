@@ -18,7 +18,10 @@ import type {
   Subscription,
   TranscriptSegment,
 } from "@/components/arbok/types";
-import { DEFAULT_APP_SETTINGS } from "@/lib/arbok/providers";
+import {
+  DEFAULT_APP_SETTINGS,
+  migrateLegacyCloudAsrSettings,
+} from "@/lib/arbok/providers";
 
 let cachedDb: DatabaseSync | null = null;
 let cachedPath: string | null = null;
@@ -166,6 +169,10 @@ function initSchema(db: DatabaseSync): void {
   if (!colNames.has("stream_expires_at")) {
     db.exec("ALTER TABLE episodes ADD COLUMN stream_expires_at INTEGER");
   }
+  if (!colNames.has("is_read")) {
+    db.exec("ALTER TABLE episodes ADD COLUMN is_read INTEGER DEFAULT 0");
+    db.exec("UPDATE episodes SET is_read = is_finished WHERE is_finished = 1");
+  }
   const sourceCols = db
     .prepare("PRAGMA table_info(sources)")
     .all() as Array<{ name: string }>;
@@ -192,14 +199,15 @@ function seedIfEmpty(db: DatabaseSync): void {
   const now = Date.now();
   const insertSource = db.prepare(`
     INSERT OR IGNORE INTO sources
-      (id, platform, title, source_url, gradient, short_label, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (id, platform, title, description, source_url, gradient, short_label, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const sub of INITIAL_SUBSCRIPTIONS) {
     insertSource.run(
       sub.id,
       sub.platform,
       sub.name,
+      sub.description ?? null,
       `https://arbok.local/source/${sub.id}`,
       sub.gradient,
       sub.shortLabel,
@@ -210,10 +218,10 @@ function seedIfEmpty(db: DatabaseSync): void {
   const insertEpisode = db.prepare(`
     INSERT OR IGNORE INTO episodes (
       id, source_id, platform, channel, title, subtitle, gradient,
-      cover_label, cover_kicker, page_url, date_label, duration_sec,
-      play_position_sec, media_type, download_status, subtitle_status,
+      cover_label, cover_kicker, page_url, date_label, published_at, duration_sec,
+      play_position_sec, is_read, media_type, download_status, subtitle_status,
       is_bilingual, language, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertSeg = db.prepare(`
@@ -247,8 +255,10 @@ function seedIfEmpty(db: DatabaseSync): void {
       ep.coverKicker ?? null,
       ep.pageUrl,
       ep.date,
+      ep.publishedAt ?? now - idx * 86_400_000,
       ep.durationSec,
       ep.positionSec,
+      ep.isRead ? 1 : 0,
       ep.mediaType,
       ep.isOffline ? "completed" : "none",
       ep.hasOfficialSub ? "ready" : "none",
@@ -349,13 +359,14 @@ export function listSubscriptions(): Subscription[] {
   const db = getDb();
   const rows = db
     .prepare(
-      "SELECT id, platform, external_id, title, cover_url, source_url, gradient, short_label, playback_rate, folder_id FROM sources ORDER BY created_at ASC"
+      "SELECT id, platform, external_id, title, description, cover_url, source_url, gradient, short_label, playback_rate, folder_id FROM sources ORDER BY created_at ASC"
     )
     .all() as Array<{
     id: string;
     platform: Platform;
     external_id: string | null;
     title: string;
+    description: string | null;
     cover_url: string | null;
     source_url: string;
     gradient: string | null;
@@ -369,6 +380,7 @@ export function listSubscriptions(): Subscription[] {
     platform: r.platform,
     externalId: r.external_id ?? undefined,
     name: r.title,
+    description: r.description ?? undefined,
     coverUrl: r.cover_url ?? undefined,
     sourceUrl: r.source_url,
     gradient: r.gradient ?? "linear-gradient(135deg, #4338ca, #6366f1)",
@@ -420,11 +432,12 @@ export function clearFolderFromSubscriptions(folderId: string): void {
 export function upsertSubscription(sub: Subscription): void {
   const db = getDb();
   db.prepare(`
-    INSERT INTO sources (id, platform, external_id, title, cover_url, source_url, gradient, short_label, folder_id, last_synced_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sources (id, platform, external_id, title, description, cover_url, source_url, gradient, short_label, folder_id, last_synced_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       external_id = COALESCE(excluded.external_id, sources.external_id),
       title = excluded.title,
+      description = COALESCE(excluded.description, sources.description),
       cover_url = COALESCE(excluded.cover_url, sources.cover_url),
       source_url = excluded.source_url,
       gradient = excluded.gradient,
@@ -436,6 +449,7 @@ export function upsertSubscription(sub: Subscription): void {
     sub.platform,
     sub.externalId ?? null,
     sub.name,
+    sub.description ?? null,
     sub.coverUrl ?? null,
     sub.sourceUrl ?? `https://arbok.local/source/${sub.id}`,
     sub.gradient,
@@ -530,6 +544,37 @@ function loadChatForEpisode(db: DatabaseSync, episodeId: string): ChatMessage[] 
   return rows;
 }
 
+function derivePublishedAtMs(
+  dateLabel: string | null,
+  publishedAt: number | null,
+  createdAt: number
+): number {
+  if (typeof publishedAt === "number" && publishedAt > 0) {
+    return publishedAt > 1e12 ? publishedAt : publishedAt * 1000;
+  }
+  const base = createdAt > 0 ? createdAt : Date.now();
+  const label = (dateLabel ?? "").trim();
+  const isoMatch = label.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const parsed = Date.parse(
+      `${isoMatch[1]}-${isoMatch[2].padStart(2, "0")}-${isoMatch[3].padStart(2, "0")}T12:00:00`
+    );
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  const daysMatch = label.match(/^(\d+)\s*天前$/);
+  if (daysMatch) {
+    return base - Number(daysMatch[1]) * 86_400_000;
+  }
+  if (label === "昨天") {
+    return base - 86_400_000;
+  }
+  const hoursMatch = label.match(/^(\d+)\s*小时前$/);
+  if (hoursMatch) {
+    return base - Number(hoursMatch[1]) * 3_600_000;
+  }
+  return base;
+}
+
 export function listEpisodes(): Episode[] {
   const db = getDb();
   const rows = db
@@ -542,6 +587,12 @@ export function listEpisodes(): Episode[] {
     const guide = loadGuideForEpisode(db, id);
     const chat = loadChatForEpisode(db, id);
     const hasTranslations = transcript.some((s) => Boolean(s.zh?.trim()));
+    const createdAt = Number(r.created_at ?? Date.now());
+    const publishedAt = derivePublishedAtMs(
+      (r.date_label as string | null) ?? null,
+      typeof r.published_at === "number" ? r.published_at : null,
+      createdAt
+    );
 
     return {
       id,
@@ -554,6 +605,7 @@ export function listEpisodes(): Episode[] {
       description: (r.description as string | null) ?? undefined,
       coverUrl: (r.cover_url as string | null) ?? undefined,
       date: String(r.date_label ?? "刚刚"),
+      publishedAt,
       durationSec: Number(r.duration_sec ?? 0),
       positionSec: Number(r.play_position_sec ?? 0),
       mediaType: (r.media_type as "audio" | "video") ?? "audio",
@@ -563,6 +615,7 @@ export function listEpisodes(): Episode[] {
       hasAiGuide: Boolean(guide),
       isOffline: r.download_status === "completed",
       isStarred: Number(r.is_starred ?? 0) === 1,
+      isRead: Number(r.is_read ?? r.is_finished ?? 0) === 1,
       gradient:
         (r.gradient as string | null) ??
         "linear-gradient(135deg, #4338ca, #6366f1)",
@@ -611,10 +664,10 @@ export function insertEpisode(ep: Episode): Episode {
   db.prepare(`
     INSERT INTO episodes (
       id, source_id, external_id, platform, channel, title, subtitle, description, cover_url, gradient,
-      cover_label, cover_kicker, page_url, date_label, duration_sec,
-      play_position_sec, is_starred, media_type, audio_url, video_url, stream_expires_at,
+      cover_label, cover_kicker, page_url, date_label, published_at, duration_sec,
+      play_position_sec, is_starred, is_read, media_type, audio_url, video_url, stream_expires_at,
       local_file_path, download_status, subtitle_status, is_bilingual, language, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     ep.id,
     validSourceId,
@@ -630,9 +683,11 @@ export function insertEpisode(ep: Episode): Episode {
     ep.coverKicker ?? null,
     ep.pageUrl,
     ep.date,
+    ep.publishedAt ?? now,
     ep.durationSec,
     ep.positionSec,
     ep.isStarred ? 1 : 0,
+    ep.isRead ? 1 : 0,
     ep.mediaType,
     ep.audioUrl ?? null,
     ep.videoUrl ?? null,
@@ -663,6 +718,7 @@ export function upsertEpisodeByExternalId(ep: Episode): {
       streamExpiresAt: ep.streamExpiresAt ?? existing.streamExpiresAt,
       durationSec: ep.durationSec > 0 ? ep.durationSec : existing.durationSec,
       coverUrl: ep.coverUrl ?? existing.coverUrl,
+      publishedAt: ep.publishedAt ?? existing.publishedAt,
     });
     if (existing.transcript.length === 0 && ep.transcript.length > 0) {
       replaceEpisodeTranscript(existing.id, ep.transcript);
@@ -672,6 +728,18 @@ export function upsertEpisodeByExternalId(ep: Episode): {
   return { episode: insertEpisode(ep), created: true };
 }
 
+export function markEpisodesRead(episodeIds: string[], isRead = true): void {
+  if (episodeIds.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    "UPDATE episodes SET is_read = ?, is_finished = ? WHERE id = ?"
+  );
+  const val = isRead ? 1 : 0;
+  for (const id of episodeIds) {
+    stmt.run(val, val, id);
+  }
+}
+
 export function updateEpisodeFields(
   episodeId: string,
   patch: {
@@ -679,6 +747,8 @@ export function updateEpisodeFields(
     durationSec?: number;
     isOffline?: boolean;
     isStarred?: boolean;
+    isRead?: boolean;
+    publishedAt?: number;
     localFilePath?: string | null;
     downloadStatus?: string;
     subtitleStatus?: string;
@@ -704,6 +774,19 @@ export function updateEpisodeFields(
   if (typeof patch.isStarred === "boolean") {
     db.prepare("UPDATE episodes SET is_starred = ? WHERE id = ?").run(
       patch.isStarred ? 1 : 0,
+      episodeId
+    );
+  }
+  if (typeof patch.isRead === "boolean") {
+    db.prepare("UPDATE episodes SET is_read = ?, is_finished = ? WHERE id = ?").run(
+      patch.isRead ? 1 : 0,
+      patch.isRead ? 1 : 0,
+      episodeId
+    );
+  }
+  if (typeof patch.publishedAt === "number" && patch.publishedAt > 0) {
+    db.prepare("UPDATE episodes SET published_at = ? WHERE id = ?").run(
+      patch.publishedAt,
       episodeId
     );
   }
@@ -961,7 +1044,7 @@ export function getAppSettings(): AppSettings {
       // Ignore malformed legacy entries.
     }
   }
-  return merged as unknown as AppSettings;
+  return migrateLegacyCloudAsrSettings(merged as unknown as AppSettings);
 }
 
 export function saveAppSettings(patch: Partial<AppSettings>): AppSettings {

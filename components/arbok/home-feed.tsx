@@ -4,10 +4,14 @@ import { Button } from "@ui-sdk/react/button";
 import {
   CheckIcon,
   ChevronRightIcon,
+  CircleIcon,
   Loader2Icon,
   PlayIcon,
   PlusIcon,
+  StarIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
+import { isEpisodeRead } from "@/lib/arbok/episode-filters";
 import { getUiCopy } from "@/lib/arbok/i18n";
 import {
   formatRemainingMinutes,
@@ -29,11 +33,14 @@ interface HomeFeedProps {
   allEpisodes: Episode[];
   subscriptions: Subscription[];
   recommendedShows: RecommendedShow[];
+  channelHeader?: ReactNode;
   subscribingRecId?: string | null;
   showRecommendations?: boolean;
   keepOriginalShowNames?: boolean;
   uiLanguage?: UiLanguage;
   onOpenEpisode: (epId: string) => void;
+  onToggleRead?: (epId: string) => void;
+  onToggleStarred?: (epId: string) => void;
   onContinueHero: () => void;
   onSelectSubscription: (subId: string) => void;
   onViewAllContinue: () => void;
@@ -47,13 +54,22 @@ function EpisodeGridCard({
   ep,
   compactMeta,
   onSelect,
+  onToggleRead,
+  onToggleStarred,
 }: {
   ep: Episode;
   compactMeta?: boolean;
   onSelect: () => void;
+  onToggleRead?: (epId: string) => void;
+  onToggleStarred?: (epId: string) => void;
 }) {
   const meta = getPlatformMeta(ep.platform);
-  const progressPct = Math.round((ep.positionSec / ep.durationSec) * 100);
+  const progressPct =
+    ep.durationSec > 0
+      ? Math.min(100, Math.round((ep.positionSec / ep.durationSec) * 100))
+      : 0;
+  const read = isEpisodeRead(ep);
+  const starred = Boolean(ep.isStarred);
   const subtitleBadge = ep.isBilingual
     ? "双语字幕"
     : ep.hasOfficialSub
@@ -61,99 +77,159 @@ function EpisodeGridCard({
       : "待 ASR";
 
   return (
-    <Button
-      className="arbok-grid-card group flex h-auto w-full flex-col items-stretch justify-start gap-2.5 whitespace-normal border-0 bg-transparent p-0 text-left font-normal hover:bg-transparent"
-      onClick={onSelect}
-    >
-      <div
-        className="relative aspect-video w-full shrink-0 overflow-hidden rounded-xl text-white shadow-xs transition-transform duration-200 group-hover:scale-[1.015]"
-        style={{ background: ep.gradient }}
-        aria-hidden="true"
+    <div className="group/card relative flex w-full flex-col">
+      <Button
+        className="arbok-grid-card group flex h-auto w-full flex-col items-stretch justify-start gap-2.5 whitespace-normal border-0 bg-transparent p-0 text-left font-normal hover:bg-transparent"
+        onClick={onSelect}
       >
-        {ep.coverUrl && (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={ep.coverUrl}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        )}
         <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background: ep.coverUrl
-              ? "linear-gradient(180deg, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.06) 45%, rgba(0,0,0,0.48) 100%)"
-              : "radial-gradient(circle at 20% 20%, rgba(255,255,255,0.16), transparent 45%), linear-gradient(180deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.34) 100%)",
-          }}
-        />
-
-        <span className="absolute top-2.5 left-2.5 rounded-md bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-md">
-          {subtitleBadge}
-        </span>
-
-        <span className="absolute top-2.5 right-2.5 rounded-md bg-black/45 px-1.5 py-0.5 text-[10px] font-semibold text-white/95 backdrop-blur-md">
-          {meta.label}
-        </span>
-
-        {!ep.coverUrl && (
-          <div className="relative flex h-full w-full flex-col items-center justify-center px-4 text-center">
-            {ep.coverKicker && (
-              <span className="text-[10px] font-semibold tracking-widest uppercase text-white/75">
-                {ep.coverKicker}
-              </span>
-            )}
-            <span className="mt-0.5 text-lg font-bold tracking-tight text-white drop-shadow-xs">
-              {ep.coverLabel}
-            </span>
-          </div>
-        )}
-
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
-          <span className="flex size-9 items-center justify-center rounded-full bg-black/65 text-white shadow-md backdrop-blur-md">
-            <PlayIcon className="size-4 translate-x-[1px] fill-white" />
-          </span>
-        </span>
-
-        <span className="tabular-nums absolute right-2 bottom-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
-          {formatTime(ep.durationSec)}
-        </span>
-
-        {progressPct > 0 && (
-          <div className="absolute right-0 bottom-0 left-0 h-1 bg-white/25">
-            <div
-              className="h-full bg-white"
-              style={{ width: `${Math.min(100, progressPct)}%` }}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="flex w-full flex-col gap-1 px-0.5">
-        <div className="flex items-center gap-1.5 truncate text-[11.5px] text-[var(--ui-muted-foreground)]">
-          {!compactMeta && (
-            <span
-              className="size-1.5 shrink-0 rounded-full"
-              style={{ background: meta.dot }}
-              aria-hidden="true"
+          className="relative aspect-video w-full shrink-0 overflow-hidden rounded-xl text-white shadow-xs transition-transform duration-200 group-hover/card:scale-[1.015]"
+          style={{ background: ep.gradient }}
+          aria-hidden="true"
+        >
+          {ep.coverUrl && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={ep.coverUrl}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="absolute inset-0 h-full w-full object-cover"
             />
           )}
-          <span className="truncate font-medium">{ep.channel}</span>
-          <span>·</span>
-          {progressPct > 0 ? (
-            <span className="shrink-0">
-              看到 {progressPct}% · {formatRemainingMinutes(ep.durationSec, ep.positionSec)}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background: ep.coverUrl
+                ? "linear-gradient(180deg, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.06) 45%, rgba(0,0,0,0.48) 100%)"
+                : "radial-gradient(circle at 20% 20%, rgba(255,255,255,0.16), transparent 45%), linear-gradient(180deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.34) 100%)",
+            }}
+          />
+
+          <span className="absolute top-2.5 left-2.5 rounded-md bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-md">
+            {subtitleBadge}
+          </span>
+
+          <span className="absolute top-2.5 right-2.5 rounded-md bg-black/45 px-1.5 py-0.5 text-[10px] font-semibold text-white/95 backdrop-blur-md">
+            {meta.label}
+          </span>
+
+          {!ep.coverUrl && (
+            <div className="relative flex h-full w-full flex-col items-center justify-center px-4 text-center">
+              {ep.coverKicker && (
+                <span className="text-[10px] font-semibold tracking-widest uppercase text-white/75">
+                  {ep.coverKicker}
+                </span>
+              )}
+              <span className="mt-0.5 text-lg font-bold tracking-tight text-white drop-shadow-xs">
+                {ep.coverLabel}
+              </span>
+            </div>
+          )}
+
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover/card:opacity-100">
+            <span className="flex size-9 items-center justify-center rounded-full bg-black/65 text-white shadow-md backdrop-blur-md">
+              <PlayIcon className="size-4 translate-x-[1px] fill-white" />
             </span>
-          ) : (
-            <span className="shrink-0">{ep.date}</span>
+          </span>
+
+          <span className="tabular-nums absolute right-2 bottom-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+            {formatTime(ep.durationSec)}
+          </span>
+
+          {progressPct > 0 && (
+            <div className="absolute right-0 bottom-0 left-0 h-1 bg-white/25">
+              <div
+                className="h-full bg-white"
+                style={{ width: `${Math.min(100, progressPct)}%` }}
+              />
+            </div>
           )}
         </div>
 
-        <span className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[var(--ui-foreground)] group-hover:text-[var(--arbok-accent-text)]">
-          {ep.title}
-        </span>
-      </div>
-    </Button>
+        <div className="flex w-full flex-col gap-1 px-0.5">
+          <div className="flex items-center gap-1.5 truncate text-[11.5px] text-[var(--ui-muted-foreground)]">
+            {!compactMeta && !read && (
+              <span
+                className="size-1.5 shrink-0 rounded-full"
+                style={{ background: meta.dot }}
+                aria-hidden="true"
+              />
+            )}
+            <span className="truncate font-medium">{ep.channel}</span>
+            <span>·</span>
+            {read ? (
+              <span className="shrink-0">已读 · {ep.date}</span>
+            ) : progressPct > 0 ? (
+              <span className="shrink-0">
+                看到 {progressPct}% · {formatRemainingMinutes(ep.durationSec, ep.positionSec)}
+              </span>
+            ) : (
+              <span className="shrink-0">{ep.date}</span>
+            )}
+          </div>
+
+          <span
+            className={`line-clamp-2 text-[13.5px] font-semibold leading-snug group-hover/card:text-[var(--arbok-accent-text)] ${
+              read
+                ? "text-[var(--ui-muted-foreground)]"
+                : "text-[var(--ui-foreground)]"
+            }`}
+          >
+            {ep.title}
+          </span>
+        </div>
+      </Button>
+
+      {(onToggleRead || onToggleStarred) && (
+        <div
+          data-episode-actions={ep.id}
+          className="pointer-events-none absolute -top-2.5 right-2 z-20 flex translate-y-1 items-center gap-0.5 rounded-full border border-[var(--ui-border)] bg-[var(--arbok-surface)]/95 p-1 opacity-0 shadow-md backdrop-blur-md transition-all duration-150 group-hover/card:pointer-events-auto group-hover/card:translate-y-0 group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:translate-y-0 group-focus-within/card:opacity-100"
+        >
+          {onToggleRead && (
+            <Button
+              aria-label={read ? "标记为未读" : "标记为已读"}
+              title={read ? "标记为未读" : "标记为已读"}
+              aria-pressed={read}
+              className="size-7 rounded-full border-transparent bg-transparent p-0 text-[var(--ui-foreground)] hover:bg-[var(--ui-muted)]"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleRead(ep.id);
+              }}
+            >
+              <CircleIcon
+                className={`size-3.5 ${
+                  read
+                    ? "text-[var(--ui-muted-foreground)]"
+                    : "fill-current text-[var(--ui-foreground)]"
+                }`}
+                aria-hidden="true"
+              />
+            </Button>
+          )}
+          {onToggleStarred && (
+            <Button
+              aria-label={starred ? "取消收藏" : "收藏"}
+              title={starred ? "取消收藏" : "收藏"}
+              aria-pressed={starred}
+              className="size-7 rounded-full border-transparent bg-transparent p-0 text-[var(--ui-foreground)] hover:bg-[var(--ui-muted)]"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleStarred(ep.id);
+              }}
+            >
+              <StarIcon
+                className={`size-3.5 ${
+                  starred
+                    ? "fill-amber-400 text-amber-500"
+                    : "text-[var(--ui-foreground)]"
+                }`}
+                aria-hidden="true"
+              />
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -165,11 +241,14 @@ export function HomeFeed({
   allEpisodes,
   subscriptions,
   recommendedShows,
+  channelHeader,
   subscribingRecId = null,
   showRecommendations = true,
   keepOriginalShowNames = false,
   uiLanguage = "system",
   onOpenEpisode,
+  onToggleRead,
+  onToggleStarred,
   onContinueHero,
   onSelectSubscription,
   onViewAllContinue,
@@ -197,30 +276,31 @@ export function HomeFeed({
     .slice(0, 4);
 
   if (!isInboxHome) {
-    if (episodes.length === 0) {
-      return (
-        <div className="mx-auto my-14 max-w-sm rounded-2xl border border-dashed border-[var(--ui-input)] bg-[var(--arbok-surface)] p-7 text-center">
-          <h2 className="text-sm font-semibold text-[var(--ui-foreground)]">
-            没有匹配的内容
-          </h2>
-          <p className="mt-1.5 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
-            试试切换顶部平台筛选，或点击左上角「添加链接 / 订阅」导入新内容。
-          </p>
-        </div>
-      );
-    }
-
     return (
       <div className="w-full px-7 py-6 pb-12">
-        <div className="grid grid-cols-1 gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-          {episodes.map((ep) => (
-            <EpisodeGridCard
-              key={ep.id}
-              ep={ep}
-              onSelect={() => onOpenEpisode(ep.id)}
-            />
-          ))}
-        </div>
+        {channelHeader}
+        {episodes.length === 0 ? (
+          <div className="mx-auto my-14 max-w-sm rounded-2xl border border-dashed border-[var(--ui-input)] bg-[var(--arbok-surface)] p-7 text-center">
+            <h2 className="text-sm font-semibold text-[var(--ui-foreground)]">
+              没有匹配的内容
+            </h2>
+            <p className="mt-1.5 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
+              试试调整顶部的未读/观看状态、日期筛选，或点击左上角「添加链接 / 订阅」导入新内容。
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-x-5 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+            {episodes.map((ep) => (
+              <EpisodeGridCard
+                key={ep.id}
+                ep={ep}
+                onSelect={() => onOpenEpisode(ep.id)}
+                onToggleRead={onToggleRead}
+                onToggleStarred={onToggleStarred}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -323,6 +403,8 @@ export function HomeFeed({
               ep={ep}
               compactMeta
               onSelect={() => onOpenEpisode(ep.id)}
+              onToggleRead={onToggleRead}
+              onToggleStarred={onToggleStarred}
             />
           ))}
         </div>
@@ -351,6 +433,8 @@ export function HomeFeed({
                 key={`latest-${ep.id}`}
                 ep={ep}
                 onSelect={() => onOpenEpisode(ep.id)}
+                onToggleRead={onToggleRead}
+                onToggleStarred={onToggleStarred}
               />
             ))}
           </div>

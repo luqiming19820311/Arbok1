@@ -601,6 +601,7 @@ async function fetchBilibiliSpaceViaMediaList(
   doFetch: typeof fetch
 ): Promise<{
   channel: string;
+  description?: string;
   avatarUrl?: string;
   items: Array<{
     bvid: string;
@@ -647,26 +648,26 @@ async function fetchBilibiliSpaceViaMediaList(
     let avatarUrl = normalizeHttpsUrl(
       list.find((m) => m.upper?.face)?.upper?.face
     );
+    let description: string | undefined;
 
-    if (!channel || !avatarUrl) {
-      try {
-        const cardRes = await doFetch(
-          `https://api.bilibili.com/x/web-interface/card?mid=${encodeURIComponent(mid)}`,
-          { headers }
-        );
-        if (cardRes.ok) {
-          const cardJson = (await cardRes.json()) as {
-            code: number;
-            data?: { card?: { name?: string; face?: string } };
-          };
-          if (cardJson.code === 0 && cardJson.data?.card) {
-            channel = channel || cardJson.data.card.name || "";
-            avatarUrl = avatarUrl || normalizeHttpsUrl(cardJson.data.card.face);
-          }
+    try {
+      const cardRes = await doFetch(
+        `https://api.bilibili.com/x/web-interface/card?mid=${encodeURIComponent(mid)}`,
+        { headers }
+      );
+      if (cardRes.ok) {
+        const cardJson = (await cardRes.json()) as {
+          code: number;
+          data?: { card?: { name?: string; face?: string; sign?: string } };
+        };
+        if (cardJson.code === 0 && cardJson.data?.card) {
+          channel = channel || cardJson.data.card.name || "";
+          avatarUrl = avatarUrl || normalizeHttpsUrl(cardJson.data.card.face);
+          description = cardJson.data.card.sign?.trim() || undefined;
         }
-      } catch {
-        // Optional profile card enrichment.
       }
+    } catch {
+      // Optional profile card enrichment.
     }
 
     const items = list
@@ -686,6 +687,7 @@ async function fetchBilibiliSpaceViaMediaList(
     if (items.length === 0) return null;
     return {
       channel: channel || `B站 UP主 ${mid}`,
+      description,
       avatarUrl,
       items,
     };
@@ -721,6 +723,7 @@ export async function parseBilibiliUrl(
         platform: "bilibili",
         sourceUrl: canonicalSpaceUrl,
         externalId: mid,
+        description: mediaListResult.description,
         coverUrl: mediaListResult.avatarUrl,
         gradient: "linear-gradient(135deg, #9d174d 0%, #db2777 55%, #4c1d95 100%)",
         shortLabel: channel.slice(0, 3),
@@ -736,6 +739,7 @@ export async function parseBilibiliUrl(
         description: item.intro,
         coverUrl: item.coverUrl,
         date: formatRelativeDate(item.pubtime),
+        publishedAt: item.pubtime ? item.pubtime * 1000 : undefined,
         durationSec: item.durationSec > 0 ? item.durationSec : 600,
         positionSec: 0,
         mediaType: "video",

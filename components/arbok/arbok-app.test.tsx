@@ -441,3 +441,130 @@ test("desktop OTA updater supports Stable/Beta channel switching, auto-download,
     (window as unknown as { arbokDesktop?: unknown }).arbokDesktop = prevDesktop;
   }
 });
+
+test("supports auto-PiP when navigating away from playing video, unread/read/favorite card actions, header filters, channel bio + Y/M/D filter, and synced cloud ASR presets", async () => {
+  const user = userEvent.setup();
+  render(<ArbokApp />);
+
+  // 1. Auto-PiP when switching away from a playing video to any other view
+  await user.click(screen.getByRole("button", { name: "继续播放" }));
+  expect(screen.getByRole("tab", { name: "字幕" })).toBeTruthy();
+
+  await user.click(screen.getByRole("button", { name: "订阅：影视飓风" }));
+  expect(screen.getByTestId("pip-stage")).toBeTruthy();
+  expect(screen.getByTestId("video-subtitle-overlay")).toBeTruthy();
+
+  // Channel bio and year/month/day date filter appear on individual subscription view
+  expect(
+    screen.getByText(/无限进步！专注影视制作技术、数码影像评测与前沿创作工作流/)
+  ).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "展开按天筛选日历" }));
+  expect(screen.getByRole("group", { name: "按日期筛选" })).toBeTruthy();
+
+  // Close auto-PiP cleanly
+  await user.click(screen.getByRole("button", { name: "退出画中画" }));
+  expect(screen.queryByTestId("pip-stage")).toBeNull();
+
+  // 2. Return to Home: verify header sort/status filters + unread-only + mark-all-read + card hover buttons
+  await user.click(screen.getByRole("button", { name: /首页/ }));
+
+  const sortBtn = screen.getByRole("button", { name: "切换排序方式" });
+  expect(sortBtn.textContent).toContain("最新在前");
+  await user.click(sortBtn);
+  expect(sortBtn.textContent).toContain("最早在前");
+  await user.click(sortBtn);
+
+  // Card hover actions: mark read and favorite on ep-bili-1
+  const biliActions = document.querySelector('[data-episode-actions="ep-bili-1"]');
+  expect(biliActions).toBeTruthy();
+  const markReadBtn = biliActions!.querySelector(
+    'button[aria-label="标记为已读"]'
+  ) as HTMLButtonElement;
+  await user.click(markReadBtn);
+
+  const favBtn = biliActions!.querySelector(
+    'button[aria-label="收藏"]'
+  ) as HTMLButtonElement;
+  await user.click(favBtn);
+  expect(
+    biliActions!.querySelector('button[aria-label="取消收藏"]')
+  ).toBeTruthy();
+
+  // Toggle "仅显示未读" hides the read episode
+  const unreadToggle = screen.getByRole("button", { name: "仅显示未读" });
+  await user.click(unreadToggle);
+  expect(
+    screen.queryByRole("button", { name: /耗时半年，我们把一套 8K/ })
+  ).toBeNull();
+
+  // Mark all as read leaves zero unread episodes
+  await user.click(screen.getByRole("button", { name: "标记全部为已读" }));
+  expect(screen.getByText("没有匹配的内容")).toBeTruthy();
+  await user.click(unreadToggle);
+
+  // Status segmented control: 已看 shows marked-read episodes, 有字幕 shows subtitled episodes
+  await user.click(screen.getByRole("radio", { name: "已看" }));
+  expect(
+    screen.getAllByRole("button", { name: /耗时半年，我们把一套 8K/ }).length
+  ).toBeGreaterThan(0);
+  await user.click(screen.getByRole("radio", { name: "有字幕" }));
+  expect(
+    screen.getAllByRole("button", {
+      name: /深度拆解 2026 本地优先 AI 智能体与上下文工程/,
+    }).length
+  ).toBeGreaterThan(0);
+
+  // 3. Cloud ASR presets match SubCast endpoints, default models, and quick-select model pills
+  await user.click(screen.getByRole("button", { name: /偏好设置/ }));
+  await user.click(screen.getByRole("tab", { name: "语音转写 (ASR)" }));
+  await user.click(
+    screen.getByRole("button", { name: "云端服务（更快，需要 Key，按量付费）" })
+  );
+
+  await user.click(screen.getByRole("button", { name: "DeepSeek" }));
+  expect(
+    (screen.getByLabelText("接口地址") as HTMLInputElement).value
+  ).toBe("https://api.deepseek.com");
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe("asr");
+
+  await user.click(screen.getByRole("button", { name: "硅基流动" }));
+  expect(
+    (screen.getByLabelText("接口地址") as HTMLInputElement).value
+  ).toBe("https://api.siliconflow.cn/v1");
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe(
+    "Qwen/Qwen3-ASR-1.7B"
+  );
+  expect(
+    screen.getByRole("button", { name: "XingChenAGI/XingChenASR-V3.2" })
+  ).toBeTruthy();
+  await user.click(
+    screen.getByRole("button", { name: "FunAudioLLM/SenseVoiceSmall" })
+  );
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe(
+    "FunAudioLLM/SenseVoiceSmall"
+  );
+
+  await user.click(screen.getByRole("button", { name: "OpenAI" }));
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe(
+    "gpt-4o-mini-transcribe"
+  );
+  expect(screen.getByRole("button", { name: "gpt-4o-transcribe" })).toBeTruthy();
+
+  await user.click(screen.getByRole("button", { name: "智谱 GLM-ASR" }));
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe(
+    "glm-asr-2512"
+  );
+
+  await user.click(screen.getByRole("button", { name: "阶跃星辰" }));
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe(
+    "stepaudio-2.5-asr"
+  );
+
+  await user.click(screen.getByRole("button", { name: "本机识别服务" }));
+  expect(
+    (screen.getByLabelText("接口地址") as HTMLInputElement).value
+  ).toBe("http://127.0.0.1:8765/v1");
+  expect((screen.getByLabelText("模型") as HTMLInputElement).value).toBe(
+    "Qwen/Qwen3-ASR-0.6B"
+  );
+}, 15_000);

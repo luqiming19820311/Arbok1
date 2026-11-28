@@ -358,10 +358,15 @@ describe("Phase 3 — Offline Downloads, LRU Cache Governance, Local Import & Pl
         "https://hf-mirror.com/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/Qwen3-ASR-0.6B-Q8_0.gguf"
       );
       expect(fs.existsSync(res.localPath)).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(path.dirname(res.localPath), "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf")
+        )
+      ).toBe(true);
       const dlState = listLocalAsrDownloadStates()["qwen3-asr-0.6b"];
       expect(dlState?.status).toBe("completed");
       expect(dlState?.progress).toBe(100);
-      expect(dlState?.downloadedBytes).toBe(26);
+      expect(dlState?.downloadedBytes).toBe(52);
       const model = listLocalAsrModels().find((m) => m.id === "qwen3-asr-0.6b");
       expect(model?.installed).toBe(true);
     } finally {

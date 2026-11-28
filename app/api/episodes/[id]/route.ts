@@ -23,6 +23,7 @@ export async function PATCH(
     positionSec?: number;
     isOffline?: boolean;
     isStarred?: boolean;
+    isRead?: boolean;
     localFilePath?: string;
   };
   updateEpisodeFields(id, body);

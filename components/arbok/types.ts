@@ -139,6 +139,8 @@ export interface LocalAsrModel {
   sizeLabel: string;
   filename: string;
   downloadUrl: string;
+  companionFilename?: string;
+  companionDownloadUrl?: string;
   installed: boolean;
   localPath?: string;
 }
@@ -248,6 +250,7 @@ export interface Subscription {
   platform: Platform;
   sourceUrl?: string;
   externalId?: string;
+  description?: string;
   coverUrl?: string;
   gradient: string;
   shortLabel: string;
@@ -312,6 +315,7 @@ export interface Episode {
   description?: string;
   coverUrl?: string;
   date: string;
+  publishedAt?: number;
   durationSec: number;
   positionSec: number;
   mediaType: "audio" | "video";
@@ -321,6 +325,7 @@ export interface Episode {
   hasAiGuide: boolean;
   isOffline: boolean;
   isStarred?: boolean;
+  isRead?: boolean;
   gradient: string;
   coverLabel: string;
   coverKicker?: string;

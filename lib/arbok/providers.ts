@@ -329,6 +329,7 @@ export interface CloudAsrPreset {
   pillLabel: string;
   endpoint: string;
   defaultModel: string;
+  models?: string[];
   description: string;
   requiresKey?: boolean;
   applyUrl?: string;
@@ -349,19 +350,24 @@ export const CLOUD_ASR_PRESETS: CloudAsrPreset[] = [
     id: "deepseek-asr",
     label: "DeepSeek 兼容转写",
     pillLabel: "DeepSeek",
-    endpoint: "https://api.deepseek.com/v1/audio/transcriptions",
-    defaultModel: "whisper-1",
-    description: "兼容 OpenAI Audio 转写协议，可自定义网关地址。",
+    endpoint: "https://api.deepseek.com",
+    defaultModel: "asr",
+    description: "和问答共用同一个 DeepSeek Key。识别时音频会发送到 DeepSeek。",
     requiresKey: true,
     applyUrl: "https://platform.deepseek.com/api_keys",
   },
   {
     id: "siliconflow",
-    label: "硅基流动 SenseVoiceSmall",
+    label: "硅基流动 Qwen3-ASR / SenseVoice",
     pillLabel: "硅基流动",
-    endpoint: "https://api.siliconflow.cn/v1/audio/transcriptions",
-    defaultModel: "FunAudioLLM/SenseVoiceSmall",
-    description: "中文/中英混合精度极高，1 小时音频仅需数秒。",
+    endpoint: "https://api.siliconflow.cn/v1",
+    defaultModel: "Qwen/Qwen3-ASR-1.7B",
+    models: [
+      "Qwen/Qwen3-ASR-1.7B",
+      "FunAudioLLM/SenseVoiceSmall",
+      "XingChenAGI/XingChenASR-V3.2",
+    ],
+    description: "Qwen3-ASR、SenseVoice 等，便宜。识别时音频会发送到 硅基流动。",
     requiresKey: true,
     applyUrl: "https://cloud.siliconflow.cn/account/ak",
   },
@@ -369,19 +375,21 @@ export const CLOUD_ASR_PRESETS: CloudAsrPreset[] = [
     id: "groq",
     label: "Groq Whisper Large v3 Turbo",
     pillLabel: "Groq",
-    endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
+    endpoint: "https://api.groq.com/openai/v1",
     defaultModel: "whisper-large-v3-turbo",
-    description: "极速 Whisper 推理，适合海外英文播客与 YouTube。",
+    models: ["whisper-large-v3-turbo", "whisper-large-v3"],
+    description: "Whisper large-v3，极快。识别时音频会发送到 Groq。",
     requiresKey: true,
     applyUrl: "https://console.groq.com/keys",
   },
   {
     id: "openai",
-    label: "OpenAI Whisper-1",
+    label: "OpenAI Whisper / gpt-4o-transcribe",
     pillLabel: "OpenAI",
-    endpoint: "https://api.openai.com/v1/audio/transcriptions",
-    defaultModel: "whisper-1",
-    description: "标准 OpenAI Audio 转写接口，返回精准句级时间戳。",
+    endpoint: "https://api.openai.com/v1",
+    defaultModel: "gpt-4o-mini-transcribe",
+    models: ["whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe"],
+    description: "Whisper / gpt-4o-transcribe。识别时音频会发送到 OpenAI。",
     requiresKey: true,
     applyUrl: "https://platform.openai.com/api-keys",
   },
@@ -389,9 +397,9 @@ export const CLOUD_ASR_PRESETS: CloudAsrPreset[] = [
     id: "zhipu-asr",
     label: "智谱 GLM-ASR",
     pillLabel: "智谱 GLM-ASR",
-    endpoint: "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",
-    defaultModel: "glm-asr",
-    description: "智谱中文与多语种语音识别，断句与标点自然。",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4",
+    defaultModel: "glm-asr-2512",
+    description: "中文识别。识别时音频会发送到 智谱 GLM-ASR。",
     requiresKey: true,
     applyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
   },
@@ -399,9 +407,10 @@ export const CLOUD_ASR_PRESETS: CloudAsrPreset[] = [
     id: "stepfun-asr",
     label: "阶跃星辰 Step-ASR",
     pillLabel: "阶跃星辰",
-    endpoint: "https://api.stepfun.com/v1/audio/transcriptions",
-    defaultModel: "step-asr",
-    description: "中文口语与长音频播客转写优化。",
+    endpoint: "https://api.stepfun.com/v1",
+    defaultModel: "stepaudio-2.5-asr",
+    models: ["stepaudio-2.5-asr", "step-asr"],
+    description: "Step ASR。识别时音频会发送到 阶跃星辰。",
     requiresKey: true,
     applyUrl: "https://platform.stepfun.com/interface-key",
   },
@@ -409,12 +418,73 @@ export const CLOUD_ASR_PRESETS: CloudAsrPreset[] = [
     id: "local-asr-service",
     label: "本机识别服务 (OpenAI 兼容)",
     pillLabel: "本机识别服务",
-    endpoint: "http://127.0.0.1:8000/v1/audio/transcriptions",
-    defaultModel: "whisper-1",
-    description: "连接你本机或局域网自建的 Faster-Whisper / FunASR 兼容接口，无需云端 Key。",
+    endpoint: "http://127.0.0.1:8765/v1",
+    defaultModel: "Qwen/Qwen3-ASR-0.6B",
+    models: ["Qwen/Qwen3-ASR-0.6B", "whisper-1"],
+    description: "OpenAI 兼容的本地服务。识别时音频会发送到 本机识别服务。",
     requiresKey: false,
   },
 ];
+
+const LEGACY_CLOUD_ASR_DEFAULTS: Partial<
+  Record<CloudAsrProviderId, { endpoint: string; model: string }>
+> = {
+  "deepseek-asr": {
+    endpoint: "https://api.deepseek.com/v1/audio/transcriptions",
+    model: "whisper-1",
+  },
+  siliconflow: {
+    endpoint: "https://api.siliconflow.cn/v1/audio/transcriptions",
+    model: "FunAudioLLM/SenseVoiceSmall",
+  },
+  groq: {
+    endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
+    model: "whisper-large-v3-turbo",
+  },
+  openai: {
+    endpoint: "https://api.openai.com/v1/audio/transcriptions",
+    model: "whisper-1",
+  },
+  "zhipu-asr": {
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions",
+    model: "glm-asr",
+  },
+  "stepfun-asr": {
+    endpoint: "https://api.stepfun.com/v1/audio/transcriptions",
+    model: "step-asr",
+  },
+  "local-asr-service": {
+    endpoint: "http://127.0.0.1:8000/v1/audio/transcriptions",
+    model: "whisper-1",
+  },
+};
+
+export function migrateLegacyCloudAsrSettings<
+  T extends Pick<AppSettings, "cloudAsrProvider" | "cloudAsrBaseUrl" | "cloudAsrModel">
+>(settings: T): T {
+  const legacy = LEGACY_CLOUD_ASR_DEFAULTS[settings.cloudAsrProvider];
+  if (!legacy) return settings;
+  const preset = getCloudAsrPreset(settings.cloudAsrProvider);
+  let nextBaseUrl = settings.cloudAsrBaseUrl;
+  let nextModel = settings.cloudAsrModel;
+  if (!nextBaseUrl || nextBaseUrl === legacy.endpoint) {
+    nextBaseUrl = preset.endpoint;
+  }
+  if (!nextModel || nextModel === legacy.model) {
+    nextModel = preset.defaultModel;
+  }
+  if (
+    nextBaseUrl === settings.cloudAsrBaseUrl &&
+    nextModel === settings.cloudAsrModel
+  ) {
+    return settings;
+  }
+  return {
+    ...settings,
+    cloudAsrBaseUrl: nextBaseUrl,
+    cloudAsrModel: nextModel,
+  };
+}
 
 export const LOCAL_ASR_MODEL_CATALOG: Omit<
   LocalAsrModel,
@@ -428,6 +498,9 @@ export const LOCAL_ASR_MODEL_CATALOG: Omit<
     filename: "Qwen3-ASR-0.6B-Q8_0.gguf",
     downloadUrl:
       "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/Qwen3-ASR-0.6B-Q8_0.gguf",
+    companionFilename: "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+    companionDownloadUrl:
+      "https://huggingface.co/ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
   },
   {
     id: "whisper-large-v3-turbo",

@@ -500,6 +500,12 @@ export async function parseRssFeed(
 
   const channelHeader = xml.split(/<item[\s>]|<entry[\s>]/i)[0] ?? xml;
   const channelTitle = matchTag(channelHeader, "title") || "未命名播客";
+  const channelDesc = cleanHtmlDescription(
+    matchTag(channelHeader, "itunes:summary") ||
+      matchTag(channelHeader, "description") ||
+      matchTag(channelHeader, "subtitle") ||
+      undefined
+  );
   const channelCover =
     matchAttr(channelHeader, "itunes:image", "href") ||
     matchTag(channelHeader, "url") ||
@@ -512,6 +518,7 @@ export async function parseRssFeed(
     platform: "podcast",
     sourceUrl: feedUrl,
     externalId: feedUrl,
+    description: channelDesc,
     coverUrl: channelCover,
     gradient: "linear-gradient(135deg, #4338ca 0%, #6d28d9 60%, #1e1b4b 100%)",
     shortLabel: channelTitle.slice(0, 3),
@@ -546,6 +553,7 @@ export async function parseRssFeed(
         : [];
     const language = detectLanguageFromText(`${channelTitle} ${title}`);
 
+    const pubMs = pubDate ? Date.parse(pubDate) : Number.NaN;
     episodes.push({
       id: stableId("ep-rss", `${feedUrl}::${guid}`),
       subId,
@@ -556,6 +564,7 @@ export async function parseRssFeed(
       description: rawDesc,
       coverUrl: epCover,
       date: formatRelativeDate(pubDate),
+      publishedAt: Number.isNaN(pubMs) ? undefined : pubMs,
       durationSec,
       positionSec: 0,
       mediaType: "audio",
@@ -650,6 +659,8 @@ export async function parseXiaoyuzhouUrl(
         podcast?: {
           pid?: string;
           title?: string;
+          description?: string;
+          brief?: string;
           image?: { picUrl?: string };
           episodes?: Array<{
             eid?: string;
@@ -717,6 +728,7 @@ export async function parseXiaoyuzhouUrl(
       platform: "xiaoyuzhou",
       sourceUrl: url,
       externalId: podcast.pid ?? url,
+      description: cleanHtmlDescription(podcast.description ?? podcast.brief),
       coverUrl: subCover,
       gradient: "linear-gradient(135deg, #0369a1 0%, #0284c7 55%, #0c4a6e 100%)",
       shortLabel: channel.slice(0, 3),
@@ -726,6 +738,7 @@ export async function parseXiaoyuzhouUrl(
     for (const item of podcast.episodes.slice(0, 15)) {
       const audioUrl = item.enclosure?.url ?? item.media?.source?.url;
       if (!audioUrl || !item.title) continue;
+      const pubMs = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
       episodes.push({
         id: stableId("ep-xyz", item.eid ?? audioUrl),
         subId,
@@ -736,6 +749,7 @@ export async function parseXiaoyuzhouUrl(
         description: cleanHtmlDescription(item.shownotes ?? item.description),
         coverUrl: item.image?.picUrl ?? subCover,
         date: formatRelativeDate(item.pubDate),
+        publishedAt: Number.isNaN(pubMs) ? undefined : pubMs,
         durationSec: parseDurationToSeconds(item.duration) || 1800,
         positionSec: 0,
         mediaType: "audio",

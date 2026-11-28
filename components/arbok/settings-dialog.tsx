@@ -2516,6 +2516,32 @@ export function SettingsDialog({
                         }
                         placeholder={activeAsrPreset.defaultModel}
                       />
+                      {activeAsrPreset.models && activeAsrPreset.models.length > 0 && (
+                        <div
+                          role="group"
+                          aria-label={`${activeAsrPreset.pillLabel} 快捷模型`}
+                          className="mt-2 flex flex-wrap gap-1.5"
+                        >
+                          {activeAsrPreset.models.map((modelName) => {
+                            const selected =
+                              (settings.cloudAsrModel || activeAsrPreset.defaultModel) ===
+                              modelName;
+                            return (
+                              <Button
+                                key={modelName}
+                                aria-pressed={selected}
+                                data-variant={selected ? "solid" : undefined}
+                                className="tabular-nums h-7 rounded-full px-3 text-[11.5px]"
+                                onClick={() =>
+                                  onUpdateSettings({ cloudAsrModel: modelName })
+                                }
+                              >
+                                {modelName}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </Field>
 
                     <Field name="cloudAsrApiKey">

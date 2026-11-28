@@ -251,10 +251,27 @@ export async function runIsolatedSubprocess(
   });
 }
 
+export function resolveCloudAsrTranscriptionUrl(
+  rawBaseUrl: string,
+  provider: CloudAsrProviderId
+): string {
+  const preset = getCloudAsrPreset(provider);
+  const trimmed = (rawBaseUrl || preset.endpoint).trim().replace(/\/+$/, "");
+  if (!trimmed) return preset.endpoint;
+  if (/\/(?:audio\/)?transcriptions$/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (/\/v\d+(?:alpha|beta)?$/i.test(trimmed) || /\/openai\/v\d+$/i.test(trimmed)) {
+    return `${trimmed}/audio/transcriptions`;
+  }
+  return `${trimmed}/v1/audio/transcriptions`;
+}
+
 export async function transcribeChunkWithCloudApi(
   chunkPath: string,
   options: {
     provider: CloudAsrProviderId;
+    baseUrl?: string;
     model?: string;
     apiKey: string;
     language?: string;
@@ -280,11 +297,18 @@ export async function transcribeChunkWithCloudApi(
     form.append("language", options.language);
   }
 
-  const res = await doFetch(preset.endpoint, {
+  const endpoint = resolveCloudAsrTranscriptionUrl(
+    options.baseUrl || preset.endpoint,
+    options.provider
+  );
+  const headers: Record<string, string> = {};
+  if (options.apiKey?.trim()) {
+    headers.Authorization = `Bearer ${options.apiKey.trim()}`;
+  }
+
+  const res = await doFetch(endpoint, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.apiKey}`,
-    },
+    headers,
     body: form,
     signal: options.signal,
   });
@@ -321,6 +345,7 @@ export async function transcribeChunksWithCheckpoint(
   options: {
     chunkDurationSec: number;
     provider: CloudAsrProviderId;
+    baseUrl?: string;
     model?: string;
     apiKey: string;
     language?: string;
@@ -729,12 +754,170 @@ async function splitAudioForCloud(
 }
 
 const LOCAL_WHISPER_CHUNK_SEC = 180;
+const LOCAL_QWEN3_CHUNK_SEC = 25;
+
+export function parseQwen3AsrOutput(rawStdout: string): string {
+  let text = rawStdout.replace(/\r\n/g, "\n").trim();
+  if (!text) return "";
+
+  const asrTagIdx = text.lastIndexOf("<asr_text>");
+  if (asrTagIdx !== -1) {
+    text = text.slice(asrTagIdx + "<asr_text>".length);
+  } else {
+    text = text.replace(/^language\s+[A-Za-z][A-Za-z\s-]{0,24}(?:\n|:|\s{2,})/i, "");
+  }
+
+  text = text
+    .replace(/<\|[^|>]+\|>/g, "")
+    .replace(/<\/?(?:think|asr_text|s)>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text || NON_SPEECH_HALLUCINATION_RE.test(text)) return "";
+  return text;
+}
+
+export function splitQwen3TextToTimedSegments(
+  text: string,
+  offsetSec: number,
+  chunkDurationSec: number
+): Array<{ start: number; end: number; orig: string }> {
+  const cleaned = text.trim();
+  if (!cleaned) return [];
+  const safeDur = Math.max(1, chunkDurationSec);
+
+  const rawPieces = cleaned
+    .split(/(?<=[。？！?!])\s*|(?<=\.)\s+(?=[A-Z0-9\u4e00-\u9fff])/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const mergedPieces: string[] = [];
+  for (const piece of rawPieces) {
+    const prev = mergedPieces[mergedPieces.length - 1];
+    if (prev && prev.length < 14 && prev.length + piece.length <= 72) {
+      mergedPieces[mergedPieces.length - 1] = `${prev} ${piece}`.trim();
+    } else {
+      mergedPieces.push(piece);
+    }
+  }
+
+  const pieces = mergedPieces.length > 0 ? mergedPieces : [cleaned];
+  const totalWeight = pieces.reduce((acc, p) => acc + Math.max(1, p.length), 0);
+  let cursor = offsetSec;
+
+  const segments = pieces.map((piece, idx) => {
+    const share = (Math.max(1, piece.length) / totalWeight) * safeDur;
+    const start = Number(cursor.toFixed(2));
+    const end =
+      idx === pieces.length - 1
+        ? Number((offsetSec + safeDur).toFixed(2))
+        : Number((cursor + share).toFixed(2));
+    cursor += share;
+    return { start, end: Math.max(start + 0.4, end), orig: piece };
+  });
+
+  return filterHallucinatedAsrSegments(segments);
+}
+
+function estimatePcm16kMonoWavDuration(filePath: string, fallbackSec: number): number {
+  try {
+    if (!filePath.toLowerCase().endsWith(".wav")) return fallbackSec;
+    const size = fs.statSync(filePath).size;
+    if (size <= 44) return fallbackSec;
+    const sec = (size - 44) / 32000;
+    return sec > 0.3 && sec < 3600 ? Number(sec.toFixed(2)) : fallbackSec;
+  } catch {
+    return fallbackSec;
+  }
+}
+
+async function downloadFileWithMirrorFallback(
+  downloadUrl: string,
+  targetPath: string,
+  options?: {
+    fetchImpl?: typeof fetch;
+    signal?: AbortSignal;
+    onProgress?: (downloadedBytes: number, totalBytes: number, percent: number) => void;
+  }
+): Promise<number> {
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const partPath = `${targetPath}.part`;
+  const doFetch = options?.fetchImpl ?? proxyFetch;
+  const candidateUrls = [downloadUrl];
+  if (downloadUrl.startsWith("https://huggingface.co/")) {
+    candidateUrls.push(
+      downloadUrl.replace("https://huggingface.co/", "https://hf-mirror.com/")
+    );
+  }
+
+  let res: Response | null = null;
+  let lastError = "";
+  for (const url of candidateUrls) {
+    try {
+      const attempt = await doFetch(url, {
+        redirect: "follow",
+        signal: options?.signal,
+        headers: { "User-Agent": "Arbok/1.0 (macOS)" },
+      });
+      if (attempt.ok && attempt.body) {
+        res = attempt;
+        break;
+      }
+      lastError = `模型下载失败 (${attempt.status})：${url}`;
+    } catch (err) {
+      if (options?.signal?.aborted) throw new Error("ASR 任务已被用户取消");
+      lastError = `模型下载网络异常：${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  if (!res || !res.body) {
+    throw new Error(lastError || `模型下载失败：${downloadUrl}`);
+  }
+
+  const totalBytes = Number(res.headers.get("content-length") || 0);
+  const reader = res.body.getReader();
+  const writeStream = fs.createWriteStream(partPath);
+  let bytes = 0;
+
+  try {
+    while (true) {
+      if (options?.signal?.aborted) {
+        throw new Error("ASR 任务已被用户取消");
+      }
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      const percent =
+        totalBytes > 0
+          ? Math.min(99, Math.round((bytes / totalBytes) * 100))
+          : Math.min(95, Math.round((bytes / (100 * 1024 * 1024)) * 100));
+      options?.onProgress?.(bytes, totalBytes, percent);
+      if (!writeStream.write(Buffer.from(value))) {
+        await new Promise<void>((resolve) => writeStream.once("drain", resolve));
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end(() => resolve());
+      writeStream.on("error", reject);
+    });
+    if (bytes === 0) {
+      throw new Error("模型下载完成但文件内容为空");
+    }
+    fs.renameSync(partPath, targetPath);
+    return bytes;
+  } catch (err) {
+    writeStream.destroy();
+    if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+    throw err;
+  }
+}
 
 async function splitAudioForLocalWhisper(
   episodeId: string,
   audioPath: string,
   chunkDurationSec: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  subdir = "local_chunks"
 ): Promise<string[]> {
   const ffmpeg = resolveBinary([
     "/opt/homebrew/bin/ffmpeg",
@@ -745,13 +928,13 @@ async function splitAudioForLocalWhisper(
     return [audioPath];
   }
 
-  const chunkDir = path.join(getAudioCacheDir(), episodeId, "local_chunks");
-  fs.mkdirSync(chunkDir, { recursive: true });
+  const chunkDir = path.join(getAudioCacheDir(), episodeId, subdir);
+  fs.mkdirSync(/*turbopackIgnore: true*/ chunkDir, { recursive: true });
   const existingChunks = fs
-    .readdirSync(chunkDir)
+    .readdirSync(/*turbopackIgnore: true*/ chunkDir)
     .filter((f) => f.startsWith("chunk_") && f.endsWith(".wav"))
     .sort()
-    .map((f) => path.join(chunkDir, f));
+    .map((f) => path.join(/*turbopackIgnore: true*/ chunkDir, f));
   if (existingChunks.length > 0) {
     return existingChunks;
   }
@@ -779,12 +962,270 @@ async function splitAudioForLocalWhisper(
   );
 
   const created = fs
-    .readdirSync(chunkDir)
+    .readdirSync(/*turbopackIgnore: true*/ chunkDir)
     .filter((f) => f.startsWith("chunk_") && f.endsWith(".wav"))
     .sort()
-    .map((f) => path.join(chunkDir, f));
+    .map((f) => path.join(/*turbopackIgnore: true*/ chunkDir, f));
 
   return created.length > 0 ? created : [audioPath];
+}
+
+export async function runLocalQwen3AsrJob(
+  episodeId: string,
+  audioPath: string,
+  options: {
+    modelPath: string;
+    mmprojPath: string;
+    mmprojDownloadUrl?: string;
+    providerLabel?: string;
+    binaryOverride?: string;
+    signal?: AbortSignal;
+    ignoreCheckpoint?: boolean;
+    fetchImpl?: typeof fetch;
+    onProgress?: (state: AsrJobState) => void;
+  }
+): Promise<TranscriptSegment[]> {
+  const mtmdBin =
+    options.binaryOverride ??
+    resolveBinary([
+      "/opt/homebrew/bin/llama-mtmd-cli",
+      "/usr/local/bin/llama-mtmd-cli",
+      "llama-mtmd-cli",
+    ]);
+  if (!mtmdBin) {
+    throw new Error("未检测到 llama-mtmd-cli，请执行 brew install llama.cpp 安装 Qwen3-ASR 本地运行引擎");
+  }
+
+  const providerLabel = options.providerLabel ?? "Qwen3-ASR 0.6B (llama.cpp)";
+  const saveQwenState = (
+    status: AsrJobState["status"],
+    progress: number,
+    message: string,
+    completedChunks: number,
+    totalChunks: number,
+    checkpoint?: AsrChunkCheckpoint,
+    error?: string
+  ) => {
+    const state: AsrJobState & { checkpoint?: AsrChunkCheckpoint } = {
+      episodeId,
+      engine: "local",
+      provider: providerLabel,
+      status,
+      progress,
+      message,
+      completedChunks,
+      totalChunks,
+      error,
+      updatedAt: Date.now(),
+      checkpoint,
+    };
+    saveAsrJob(state);
+    options.onProgress?.(state);
+  };
+
+  const mmprojPath = options.mmprojPath;
+  if (!fs.existsSync(mmprojPath) || fs.statSync(mmprojPath).size === 0) {
+    const workspaceMirror = path.join(
+      process.cwd(),
+      "data",
+      "models",
+      path.basename(mmprojPath)
+    );
+    if (
+      workspaceMirror !== mmprojPath &&
+      fs.existsSync(workspaceMirror) &&
+      fs.statSync(workspaceMirror).size > 0
+    ) {
+      fs.mkdirSync(path.dirname(mmprojPath), { recursive: true });
+      fs.copyFileSync(workspaceMirror, mmprojPath);
+    } else if (options.mmprojDownloadUrl) {
+      saveQwenState(
+        "downloading",
+        16,
+        "首次使用 Qwen3-ASR 0.6B，正在自动补充音频编码器组件（mmproj，约 204 MB）…",
+        0,
+        1
+      );
+      await downloadFileWithMirrorFallback(options.mmprojDownloadUrl, mmprojPath, {
+        fetchImpl: options.fetchImpl,
+        signal: options.signal,
+        onProgress: (_done, _total, pct) => {
+          saveQwenState(
+            "downloading",
+            Math.max(16, Math.min(22, 16 + Math.round(pct * 0.06))),
+            `正在补充 Qwen3-ASR 音频编码器组件（${pct}%）…`,
+            0,
+            1
+          );
+        },
+      });
+    } else {
+      throw new Error("缺少 Qwen3-ASR 音频编码器文件（mmproj-Qwen3-ASR-0.6B-Q8_0.gguf），请在设置中重新下载模型");
+    }
+  }
+
+  const existing = options.ignoreCheckpoint ? null : getAsrJob(episodeId);
+  const existingCkpt =
+    existing?.engine === "local" && existing.provider === providerLabel
+      ? (existing.checkpoint as AsrChunkCheckpoint | undefined)
+      : undefined;
+
+  saveQwenState(
+    "splitting",
+    22,
+    "正在使用 Qwen3-ASR 0.6B 切分 16kHz 音频分片（支持边转边看字幕）…",
+    0,
+    1
+  );
+
+  const chunks = await splitAudioForLocalWhisper(
+    episodeId,
+    audioPath,
+    LOCAL_QWEN3_CHUNK_SEC,
+    options.signal ?? new AbortController().signal,
+    "qwen3_chunks"
+  );
+
+  const completedMap = new Map<
+    number,
+    Array<{ start: number; end: number; orig: string }>
+  >();
+  if (
+    existingCkpt?.chunkDurationSec === LOCAL_QWEN3_CHUNK_SEC &&
+    existingCkpt.chunkFiles.length === chunks.length
+  ) {
+    for (const entry of existingCkpt.completedSegments) {
+      completedMap.set(entry.chunkIndex, entry.segments);
+    }
+  }
+
+  const buildCheckpoint = (): AsrChunkCheckpoint => ({
+    chunkFiles: chunks,
+    chunkDurationSec: LOCAL_QWEN3_CHUNK_SEC,
+    completedSegments: [...completedMap.entries()].map(
+      ([chunkIndex, segments]) => ({ chunkIndex, segments })
+    ),
+  });
+
+  const flushMergedTranscript = (): TranscriptSegment[] => {
+    const merged = [...completedMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .flatMap(([, segs]) => segs);
+    if (merged.length === 0) return [];
+    return replaceEpisodeTranscript(episodeId, merged);
+  };
+
+  try {
+    let runningOffset = 0;
+    const chunkDurations = chunks.map((file) =>
+      estimatePcm16kMonoWavDuration(file, LOCAL_QWEN3_CHUNK_SEC)
+    );
+
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const chunkDur = chunkDurations[idx] ?? LOCAL_QWEN3_CHUNK_SEC;
+      const offset = runningOffset;
+      runningOffset += chunkDur;
+
+      if (options.signal?.aborted) {
+        saveQwenState(
+          "cancelled",
+          Math.round((completedMap.size / Math.max(1, chunks.length)) * 100),
+          "已取消本地 Qwen3-ASR 转写（已完成分片已保留）",
+          completedMap.size,
+          chunks.length,
+          buildCheckpoint()
+        );
+        throw new Error("ASR 任务已被用户取消");
+      }
+      if (completedMap.has(idx)) {
+        continue;
+      }
+
+      const basePct = 24 + Math.round((completedMap.size / chunks.length) * 74);
+      saveQwenState(
+        "transcribing",
+        Math.min(98, basePct),
+        chunks.length > 1
+          ? `正在使用 Qwen3-ASR 0.6B 转写第 ${idx + 1}/${chunks.length} 段…`
+          : "正在使用 Qwen3-ASR 0.6B 本地转写…",
+        completedMap.size,
+        chunks.length,
+        buildCheckpoint()
+      );
+
+      const { stdout } = await runIsolatedSubprocess(
+        mtmdBin,
+        [
+          "-m",
+          options.modelPath,
+          "--mmproj",
+          mmprojPath,
+          "--audio",
+          chunks[idx],
+          "-p",
+          " ",
+          "--temp",
+          "0",
+          "-n",
+          "1024",
+        ],
+        {
+          episodeId,
+          signal: options.signal,
+        }
+      );
+
+      const parsedText = parseQwen3AsrOutput(stdout);
+      const segs = splitQwen3TextToTimedSegments(parsedText, offset, chunkDur);
+      completedMap.set(idx, segs);
+
+      const savedSoFar = flushMergedTranscript();
+      const donePct = Math.min(
+        99,
+        24 + Math.round((completedMap.size / chunks.length) * 75)
+      );
+      saveQwenState(
+        "transcribing",
+        donePct,
+        chunks.length > 1
+          ? `Qwen3-ASR 已完成 ${completedMap.size}/${chunks.length} 段，已生成 ${savedSoFar.length} 句字幕（可边听边看）`
+          : `Qwen3-ASR 已生成 ${savedSoFar.length} 句字幕`,
+        completedMap.size,
+        chunks.length,
+        buildCheckpoint()
+      );
+    }
+
+    const finalSaved = flushMergedTranscript();
+    if (finalSaved.length === 0) {
+      throw new Error("Qwen3-ASR 运行结束但未识别到有效语音内容");
+    }
+
+    saveQwenState(
+      "completed",
+      100,
+      `Qwen3-ASR 0.6B 本地转写完成，共生成 ${finalSaved.length} 条字幕`,
+      chunks.length,
+      chunks.length,
+      buildCheckpoint()
+    );
+    return finalSaved;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Qwen3-ASR 本地转写失败";
+    const cancelled = options.signal?.aborted;
+    saveQwenState(
+      cancelled ? "cancelled" : "failed",
+      Math.round((completedMap.size / Math.max(1, chunks.length)) * 100),
+      cancelled
+        ? "已取消本地 Qwen3-ASR 转写"
+        : "Qwen3-ASR 本地转写失败（支持断点重试）",
+      completedMap.size,
+      chunks.length,
+      buildCheckpoint(),
+      cancelled ? undefined : message
+    );
+    throw err;
+  }
 }
 
 function resolveWhisperCompatibleModel(explicitModelPath?: string): {
@@ -810,7 +1251,7 @@ function resolveWhisperCompatibleModel(explicitModelPath?: string): {
     const chosen = whisperInstalled[0];
     const fallbackNotice =
       preferred?.engine === "qwen3-asr"
-        ? `本机未安装 qwen3-asr 运行程序，已自动切换 ${chosen.name}（whisper.cpp）`
+        ? `本机未检测到 llama-mtmd-cli（请运行 brew install llama.cpp），已自动切换 ${chosen.name}（whisper.cpp）`
         : undefined;
     return {
       modelPath: chosen.localPath!,
@@ -821,7 +1262,7 @@ function resolveWhisperCompatibleModel(explicitModelPath?: string): {
 
   if (preferred?.engine === "qwen3-asr") {
     throw new Error(
-      "本机尚未安装 qwen3-asr 识别程序；请在「偏好设置 → 语音转写 (ASR)」中下载任意 Whisper 模型（如 Whisper large-v3-turbo 或 Whisper small），或切换云端 ASR。"
+      "本机尚未安装 llama-mtmd-cli（运行 Qwen3-ASR 0.6B 需要执行 brew install llama.cpp）；也可在「偏好设置 → 语音转写 (ASR)」中下载 Whisper 模型或切换云端服务。"
     );
   }
   throw new Error("尚未下载本地 Whisper 模型，请在「偏好设置 → 语音转写 (ASR)」中先下载模型");
@@ -840,6 +1281,37 @@ export async function runLocalWhisperJob(
     onProgress?: (state: AsrJobState) => void;
   }
 ): Promise<TranscriptSegment[]> {
+  if (!options?.binaryArgsOverride && !options?.modelPath) {
+    const settings = getAppSettings();
+    const models = listLocalAsrModels();
+    const preferred = models.find((m) => m.id === settings.localAsrModelId);
+    if (preferred?.engine === "qwen3-asr" && preferred.installed && preferred.localPath) {
+      const mtmdBin = resolveBinary([
+        "/opt/homebrew/bin/llama-mtmd-cli",
+        "/usr/local/bin/llama-mtmd-cli",
+        "llama-mtmd-cli",
+      ]);
+      if (mtmdBin) {
+        const mmprojFilename =
+          preferred.companionFilename ?? "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf";
+        const mmprojPath = path.join(
+          path.dirname(preferred.localPath),
+          mmprojFilename
+        );
+        return runLocalQwen3AsrJob(episodeId, audioPath, {
+          modelPath: preferred.localPath,
+          mmprojPath,
+          mmprojDownloadUrl: preferred.companionDownloadUrl,
+          providerLabel: preferred.name,
+          binaryOverride: mtmdBin,
+          signal: options?.signal,
+          ignoreCheckpoint: options?.ignoreCheckpoint,
+          onProgress: options?.onProgress,
+        });
+      }
+    }
+  }
+
   const whisperBin =
     options?.binaryOverride ??
     resolveBinary([
@@ -1192,16 +1664,27 @@ export function startAsrJob(
 
   void (async () => {
     try {
-      const cloudKey = getSecret(`asr:${settings.cloudAsrProvider}`);
+      const cloudPreset = getCloudAsrPreset(settings.cloudAsrProvider);
+      const fallbackLlmKeyMap: Partial<Record<CloudAsrProviderId, string>> = {
+        "deepseek-asr": "llm:deepseek",
+        siliconflow: "llm:siliconflow",
+        openai: "llm:openai",
+        "zhipu-asr": "llm:zhipu",
+      };
+      const fallbackKeyName = fallbackLlmKeyMap[settings.cloudAsrProvider];
+      const cloudKey =
+        getSecret(`asr:${settings.cloudAsrProvider}`) ||
+        (fallbackKeyName ? getSecret(fallbackKeyName) : null) ||
+        "";
       const hasRealAudioSource =
         Boolean(options?.localAudioPath && fs.existsSync(options.localAudioPath)) ||
         Boolean(ep.localFilePath && fs.existsSync(ep.localFilePath)) ||
         Boolean(ep.audioUrl && /^https?:\/\//i.test(ep.audioUrl)) ||
         !/arbok/i.test(ep.pageUrl);
 
-      if (engine === "cloud" && !cloudKey) {
+      if (engine === "cloud" && cloudPreset.requiresKey !== false && !cloudKey) {
         throw new Error(
-          `尚未配置云端 ASR (${settings.cloudAsrProvider}) 的 API Key，请在「偏好设置 → 语音转写」中配置，或切换为本地离线引擎。`
+          `尚未配置云端 ASR (${cloudPreset.pillLabel}) 的 API Key，请在「偏好设置 → 语音转写」中配置，或切换为本地离线引擎。`
         );
       }
 
@@ -1285,8 +1768,9 @@ export function startAsrJob(
         await transcribeChunksWithCheckpoint(episodeId, chunks, {
           chunkDurationSec: 600,
           provider: settings.cloudAsrProvider,
+          baseUrl: settings.cloudAsrBaseUrl,
           model: settings.cloudAsrModel,
-          apiKey: cloudKey!,
+          apiKey: cloudKey,
           language: ep.language,
           signal: controller.signal,
           ignoreCheckpoint: force,
@@ -1485,15 +1969,55 @@ export async function downloadLocalAsrModel(
         throw new Error("模型下载完成但文件内容为空");
       }
       fs.renameSync(partPath, targetPath);
+
+      let totalDownloaded = bytes;
+      if (model.companionFilename && model.companionDownloadUrl) {
+        const companionPath = path.join(
+          /*turbopackIgnore: true*/ dir,
+          model.companionFilename
+        );
+        if (
+          !fs.existsSync(/*turbopackIgnore: true*/ companionPath) ||
+          fs.statSync(/*turbopackIgnore: true*/ companionPath).size === 0
+        ) {
+          modelDownloadStates.set(modelId, {
+            modelId,
+            status: "downloading",
+            progress: 92,
+            downloadedBytes: bytes,
+            totalBytes: totalBytes || bytes,
+            updatedAt: Date.now(),
+          });
+          const compBytes = await downloadFileWithMirrorFallback(
+            model.companionDownloadUrl,
+            companionPath,
+            {
+              fetchImpl,
+              onProgress: (compDone, compTotal, compPct) => {
+                modelDownloadStates.set(modelId, {
+                  modelId,
+                  status: "downloading",
+                  progress: Math.min(99, 92 + Math.round(compPct * 0.07)),
+                  downloadedBytes: bytes + compDone,
+                  totalBytes: (totalBytes || bytes) + compTotal,
+                  updatedAt: Date.now(),
+                });
+              },
+            }
+          );
+          totalDownloaded += compBytes;
+        }
+      }
+
       modelDownloadStates.set(modelId, {
         modelId,
         status: "completed",
         progress: 100,
-        downloadedBytes: bytes,
-        totalBytes: totalBytes || bytes,
+        downloadedBytes: totalDownloaded,
+        totalBytes: totalDownloaded,
         updatedAt: Date.now(),
       });
-      return { modelId, localPath: targetPath, bytes };
+      return { modelId, localPath: targetPath, bytes: totalDownloaded };
     } catch (err) {
       writeStream.destroy();
       if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
@@ -1522,5 +2046,14 @@ export function deleteLocalAsrModel(modelId: string): boolean {
   const model = listLocalAsrModels().find((m) => m.id === modelId);
   if (!model?.localPath || !fs.existsSync(model.localPath)) return false;
   fs.unlinkSync(model.localPath);
+  if (model.companionFilename) {
+    const companionPath = path.join(
+      path.dirname(model.localPath),
+      model.companionFilename
+    );
+    if (fs.existsSync(companionPath)) {
+      fs.unlinkSync(companionPath);
+    }
+  }
   return true;
 }

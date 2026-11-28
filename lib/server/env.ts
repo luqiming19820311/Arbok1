@@ -94,6 +94,11 @@ export function inspectEnvironment(): EnvDependency[] {
     "whisper-cli",
     "whisper-cpp",
   ]);
+  const llamaMtmd = resolveBinary([
+    "/opt/homebrew/bin/llama-mtmd-cli",
+    "/usr/local/bin/llama-mtmd-cli",
+    "llama-mtmd-cli",
+  ]);
 
   const dbPath = getDatabasePath();
   const dbExists = dbPath === ":memory:" || fs.existsSync(dbPath);
@@ -113,6 +118,13 @@ export function inspectEnvironment(): EnvDependency[] {
       path: ffmpeg ?? "未检测到",
       version: ffmpeg ? getBinaryVersion(ffmpeg, ["-version"]) : "未安装",
       installHint: "brew install ffmpeg",
+    },
+    {
+      name: "llama-mtmd-cli (Qwen3-ASR 本地引擎)",
+      available: Boolean(llamaMtmd),
+      path: llamaMtmd ?? "未检测到",
+      version: llamaMtmd ? getBinaryVersion(llamaMtmd, ["--version"]) : "未安装",
+      installHint: "brew install llama.cpp",
     },
     {
       name: "whisper-cli (本地离线 ASR)",

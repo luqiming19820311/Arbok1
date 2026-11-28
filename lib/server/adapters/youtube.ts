@@ -36,6 +36,8 @@ interface YtDlpVideoInfo {
   thumbnail?: string;
   duration?: number;
   upload_date?: string;
+  timestamp?: number;
+  release_timestamp?: number;
   webpage_url?: string;
   url?: string;
   _type?: string;
@@ -275,6 +277,17 @@ async function fetchBestYouTubeSubtitle(
   };
 }
 
+function parseUploadDateMs(raw?: string, fallbackTs?: number): number | undefined {
+  if (raw && raw.length === 8) {
+    const ms = Date.parse(`${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}T12:00:00Z`);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  if (typeof fallbackTs === "number" && fallbackTs > 0) {
+    return fallbackTs > 1e12 ? fallbackTs : fallbackTs * 1000;
+  }
+  return undefined;
+}
+
 function formatUploadDate(raw?: string): string {
   if (!raw || raw.length !== 8) return "近期";
   const iso = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}T00:00:00Z`;
@@ -440,6 +453,7 @@ export async function parseYouTubeUrl(
       platform: "youtube",
       sourceUrl: normalizedUrl,
       externalId: info.channel_id ?? normalizedUrl,
+      description: info.description?.trim() || undefined,
       coverUrl: info.thumbnail ?? firstThumb,
       gradient: "linear-gradient(135deg, #9f1239 0%, #e11d48 55%, #1e1b4b 100%)",
       shortLabel: channelTitle.slice(0, 3).toUpperCase(),
@@ -460,6 +474,10 @@ export async function parseYouTubeUrl(
         title: entry.title!,
         coverUrl: thumb,
         date: formatUploadDate(entry.upload_date),
+        publishedAt: parseUploadDateMs(
+          entry.upload_date,
+          entry.timestamp ?? entry.release_timestamp
+        ),
         durationSec: Math.round(entry.duration ?? 600),
         positionSec: 0,
         mediaType: "video",
