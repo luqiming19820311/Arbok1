@@ -221,6 +221,7 @@ export function SettingsDialog({
   localAiClis = [],
   localModels,
   asrModelDownloads = {},
+  localTtsModels,
   cacheUsedMb,
   storageUsage,
   llmApiKeyDraft,
@@ -244,6 +245,8 @@ export function SettingsDialog({
   onDeleteLocalModel,
   onSaveTtsConfig,
   onTestTts,
+  onDownloadLocalTtsModel,
+  onDeleteLocalTtsModel,
   onClearCache,
   onEnforceCacheLru,
   onTestProxy,
@@ -310,8 +313,8 @@ export function SettingsDialog({
     } catch {
       setUpdateCheckResult({
         status: "up-to-date",
-        currentVersion: "0.1.0",
-        latestVersion: "0.1.0",
+        currentVersion: "0.2.0",
+        latestVersion: "0.2.0",
         repo: settings.otaRepo || "luqiming19820311/Arbok1",
         message: "已经是最新版本",
       });
@@ -616,7 +619,7 @@ export function SettingsDialog({
             <div className="flex flex-col gap-4">
               <div
                 aria-label="字幕实时效果预览"
-                className="flex min-h-[104px] flex-col items-center justify-center rounded-xl bg-gradient-to-br from-[#181b24] via-[#1f2432] to-[#11131a] px-5 py-4 text-center text-white"
+                className="flex min-h-[144px] flex-col items-center justify-center rounded-xl bg-gradient-to-br from-[#181b24] via-[#1f2432] to-[#11131a] px-5 py-5 text-center text-white"
               >
                 <div
                   className={`max-w-full ${previewOverlayClass} ${
@@ -632,7 +635,7 @@ export function SettingsDialog({
                       {settings.subtitleDisplayMode !== "orig" && previewZhPx > 0 && (
                         <div
                           className="font-semibold leading-[1.32] tracking-[0.015em] text-white antialiased"
-                          style={{ fontSize: `${Math.min(28, previewZhPx)}px` }}
+                          style={{ fontSize: `${previewZhPx}px` }}
                         >
                           视频，立刻就能看到。
                         </div>
@@ -640,7 +643,7 @@ export function SettingsDialog({
                       {settings.subtitleDisplayMode !== "zh" && previewOrigPx > 0 && (
                         <div
                           className="mt-1 leading-[1.38] text-white/90 antialiased"
-                          style={{ fontSize: `${Math.min(20, previewOrigPx)}px` }}
+                          style={{ fontSize: `${previewOrigPx}px` }}
                         >
                           videos right away.
                         </div>
@@ -2506,77 +2509,216 @@ export function SettingsDialog({
                     <span>云端服务</span>
                   </span>
                   <span className="text-[11.5px] text-[var(--ui-muted-foreground)]">
-                    豆包、DeepSeek、MiMo、通义、Edge（免 Key）等
+                    豆包、通义、MiniMax、硅基流动、阶跃、ElevenLabs、Edge 等
                   </span>
                 </Button>
               </div>
 
               {settings.ttsEngine === "local" ? (
-                <div className="flex flex-col gap-4 rounded-xl border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-[var(--ui-foreground)]">
-                      模型
-                    </span>
-                    <Button
-                      className="h-7 gap-1 border-transparent bg-transparent px-2 text-xs"
-                      pendingAnnouncement="正在合成试听语音"
-                      onClick={onTestTts}
-                    >
-                      <Volume2Icon className="size-3.5" aria-hidden="true" />
-                      <span>试听</span>
-                    </Button>
-                  </div>
+                (() => {
+                  const selectedLocalModelId =
+                    settings.localTtsModelId || "system-enhanced";
+                  const selectedLocalCatalog = localTtsModels.find(
+                    (m) => m.id === selectedLocalModelId
+                  );
+                  const activeLocalVoices =
+                    selectedLocalModelId === "system-enhanced"
+                      ? SYSTEM_TTS_VOICES
+                      : (selectedLocalCatalog?.voices ?? []);
 
-                  <div className="rounded-xl border border-[var(--ui-foreground)]/30 bg-[var(--arbok-canvas)] p-3.5">
-                    <div className="text-[13px] font-semibold text-[var(--ui-foreground)]">
-                      系统增强语音
-                    </div>
-                    <div className="mt-0.5 text-xs text-[var(--ui-muted-foreground)]">
-                      系统自带的增强音色，开箱即用
-                    </div>
-                    <div className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--status-ok-fg)]">
-                      <CheckIcon className="size-3.5" aria-hidden="true" />
-                      <span>系统自带，无需下载</span>
-                    </div>
-                  </div>
+                  return (
+                    <div className="flex flex-col gap-4 rounded-xl border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-[var(--ui-foreground)]">
+                          本地语音模型（共 {localTtsModels.length + 1} 个）
+                        </span>
+                        <Button
+                          className="h-7 gap-1 border-transparent bg-transparent px-2 text-xs"
+                          pendingAnnouncement="正在合成试听语音"
+                          onClick={onTestTts}
+                        >
+                          <Volume2Icon className="size-3.5" aria-hidden="true" />
+                          <span>试听</span>
+                        </Button>
+                      </div>
 
-                  <div className="flex flex-col gap-2">
-                    <span className="text-xs font-semibold text-[var(--ui-foreground)]">
-                      音色
-                    </span>
-                    <div
-                      role="group"
-                      aria-label="系统增强语音音色"
-                      className="flex flex-wrap gap-2"
-                    >
-                      {SYSTEM_TTS_VOICES.map((voice) => {
-                        const active =
-                          (settings.localTtsVoice || "Tingting") === voice.value;
-                        return (
-                          <Button
-                            key={voice.value}
-                            aria-pressed={active}
-                            data-variant={active ? "solid" : undefined}
-                            className="h-8 rounded-full px-3.5 text-xs"
-                            onClick={() =>
-                              onUpdateSettings({
-                                localTtsModelId: "system-enhanced",
-                                localTtsVoice: voice.value,
-                              })
-                            }
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          aria-label="选择本地语音模型 系统增强语音"
+                          aria-pressed={selectedLocalModelId === "system-enhanced"}
+                          className={`arbok-card-button h-auto w-full flex-col items-start gap-1 rounded-xl border p-3.5 text-left ${
+                            selectedLocalModelId === "system-enhanced"
+                              ? "border-[var(--ui-foreground)] bg-[var(--arbok-canvas)]"
+                              : "border-[var(--ui-border)] bg-[var(--arbok-canvas)]/45"
+                          }`}
+                          onClick={() =>
+                            onUpdateSettings({
+                              localTtsModelId: "system-enhanced",
+                              localTtsVoice:
+                                SYSTEM_TTS_VOICES.some(
+                                  (v) => v.value === settings.localTtsVoice
+                                )
+                                  ? settings.localTtsVoice
+                                  : "Tingting",
+                            })
+                          }
+                        >
+                          <div className="flex w-full items-center justify-between gap-2">
+                            <span className="text-[13px] font-semibold text-[var(--ui-foreground)]">
+                              macOS 系统增强语音（内置 · 开箱即用）
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--status-ok-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--status-ok-fg)]">
+                              <CheckIcon className="size-3" aria-hidden="true" />
+                              <span>系统自带</span>
+                            </span>
+                          </div>
+                          <span className="text-xs text-[var(--ui-muted-foreground)]">
+                            零配置离线合成，支持普通话、台湾、粤语、英语、日语共 {SYSTEM_TTS_VOICES.length} 种系统音色
+                          </span>
+                        </Button>
+
+                        {localTtsModels.map((model) => {
+                          const isSelected = selectedLocalModelId === model.id;
+                          return (
+                            <div
+                              key={model.id}
+                              className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${
+                                isSelected
+                                  ? "border-[var(--ui-foreground)] bg-[var(--arbok-canvas)]"
+                                  : "border-[var(--ui-border)] bg-[var(--arbok-canvas)]/45"
+                              }`}
+                            >
+                              <Button
+                                aria-label={`选择本地语音模型 ${model.name}`}
+                                className="arbok-card-button min-w-0 flex-1 items-start gap-2.5 border-transparent bg-transparent p-0 text-left hover:bg-transparent"
+                                onClick={() =>
+                                  onUpdateSettings({
+                                    localTtsModelId: model.id,
+                                    ...(model.defaultBaseUrl
+                                      ? { localTtsBaseUrl: model.defaultBaseUrl }
+                                      : {}),
+                                    ...(model.voices?.[0]
+                                      ? { localTtsVoice: model.voices[0].value }
+                                      : {}),
+                                  })
+                                }
+                              >
+                                <span
+                                  className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${
+                                    isSelected
+                                      ? "border-[var(--ui-foreground)] bg-[var(--ui-foreground)]"
+                                      : "border-[var(--ui-input)]"
+                                  }`}
+                                  aria-hidden="true"
+                                >
+                                  {isSelected && (
+                                    <span className="size-1.5 rounded-full bg-[var(--ui-background)]" />
+                                  )}
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[13px] font-semibold text-[var(--ui-foreground)]">
+                                    {model.name}
+                                  </span>
+                                  <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[var(--ui-muted-foreground)]">
+                                    {model.description} · {model.sizeLabel}
+                                  </span>
+                                </span>
+                              </Button>
+
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                {model.installed ? (
+                                  <>
+                                    <span className="rounded-md bg-[var(--status-ok-bg)] px-2 py-1 text-[11px] font-medium text-[var(--status-ok-fg)]">
+                                      已下载
+                                    </span>
+                                    <Button
+                                      aria-label={`删除本地语音模型 ${model.name}`}
+                                      className="size-7 p-0"
+                                      onClick={() => onDeleteLocalTtsModel(model.id)}
+                                    >
+                                      <Trash2Icon className="size-3.5" aria-hidden="true" />
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <Button
+                                    className="h-8 px-3 text-xs"
+                                    pendingAnnouncement={`正在下载 ${model.name}`}
+                                    onClick={() => onDownloadLocalTtsModel(model.id)}
+                                  >
+                                    下载
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {activeLocalVoices.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs font-semibold text-[var(--ui-foreground)]">
+                            音色
+                          </span>
+                          <div
+                            role="group"
+                            aria-label="本地语音音色"
+                            className="flex flex-wrap gap-2"
                           >
-                            {voice.label}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                            {activeLocalVoices.map((voice) => {
+                              const active =
+                                (settings.localTtsVoice ||
+                                  activeLocalVoices[0].value) === voice.value;
+                              return (
+                                <Button
+                                  key={voice.value}
+                                  aria-pressed={active}
+                                  data-variant={active ? "solid" : undefined}
+                                  className="h-8 rounded-full px-3.5 text-xs"
+                                  onClick={() =>
+                                    onUpdateSettings({
+                                      localTtsVoice: voice.value,
+                                    })
+                                  }
+                                >
+                                  {voice.label}
+                                </Button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
-                  <p className="inline-flex items-center gap-1.5 text-xs text-[var(--ui-muted-foreground)]">
-                    <LockIcon className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span>完全在本机离线合成，文字不会离开你的电脑。</span>
-                  </p>
-                </div>
+                      {selectedLocalModelId !== "system-enhanced" && (
+                        <Field name="localTtsBaseUrl">
+                          <FieldLabel>本地语音推理服务地址 (OpenAI 兼容)</FieldLabel>
+                          <Input
+                            className="tabular-nums"
+                            value={
+                              settings.localTtsBaseUrl ||
+                              selectedLocalCatalog?.defaultBaseUrl ||
+                              "http://127.0.0.1:8000/v1"
+                            }
+                            onValueChange={(localTtsBaseUrl) =>
+                              onUpdateSettings({ localTtsBaseUrl })
+                            }
+                            placeholder={
+                              selectedLocalCatalog?.defaultBaseUrl ||
+                              "http://127.0.0.1:8000/v1"
+                            }
+                          />
+                          <FieldDescription>
+                            启动 Kokoro-FastAPI / CosyVoice / ChatTTS / Fish Speech / MiMo 本地服务后即可离线调用
+                          </FieldDescription>
+                        </Field>
+                      )}
+
+                      <p className="inline-flex items-center gap-1.5 text-xs text-[var(--ui-muted-foreground)]">
+                        <LockIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span>完全在本机离线合成，文字不会离开你的电脑。</span>
+                      </p>
+                    </div>
+                  );
+                })()
               ) : (
                 <div className="flex flex-col gap-4">
                   <div
@@ -2704,8 +2846,12 @@ export function SettingsDialog({
                                   activeTtsKeyInfo?.configured
                                     ? `已保存 ${activeTtsKeyInfo.masked}（输入新值覆盖）`
                                     : settings.cloudTtsProvider === "doubao-tts"
-                                      ? "填过豆包语音识别的可以留空"
-                                      : "粘贴 API Key"
+                                      ? "填火山 API Key 或 AppID:AccessToken（已配豆包 ASR 可留空）"
+                                      : settings.cloudTtsProvider === "qwen-tts"
+                                        ? "填阿里云百炼 API Key（已配通义千问 AI 可留空）"
+                                        : settings.cloudTtsProvider === "siliconflow-tts"
+                                          ? "填硅基流动 API Key（已配硅基流动 AI 可留空）"
+                                          : "粘贴 API Key"
                                 }
                               />
                               <PasswordInputToggle aria-label="显示或隐藏云端 TTS API Key">
@@ -2881,7 +3027,7 @@ export function SettingsDialog({
                           Arbok
                         </span>
                         <span className="tabular-nums text-xs text-[var(--ui-muted-foreground)]">
-                          版本 V0.1.0
+                          版本 V0.2.0
                         </span>
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
@@ -3034,7 +3180,7 @@ export function SettingsDialog({
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-border)] pt-3 text-[11px] text-[var(--ui-muted-foreground)]">
-                    <span>Arbok V0.1.0 · 本地优先 · 数据与凭据均存本机</span>
+                    <span>Arbok V0.2.0 · 本地优先 · 数据与凭据均存本机</span>
                     <span>GitHub Releases OTA · luqiming19820311</span>
                   </div>
                 </div>

@@ -14,6 +14,7 @@ import {
   Resizable,
   ResizableHandle,
   ResizablePanel,
+  createResizableController,
 } from "@ui-sdk/react/resizable";
 import {
   ScrollArea,
@@ -49,6 +50,7 @@ import { Toggle, ToggleIcon } from "@ui-sdk/react/toggle";
 import {
   ArrowLeftIcon,
   AudioLinesIcon,
+  BookmarkIcon,
   BookmarkPlusIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -58,9 +60,13 @@ import {
   HeadphonesIcon,
   LanguagesIcon,
   Maximize2Icon,
+  Minimize2Icon,
   MinusIcon,
   PanelLeftIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
   PauseIcon,
+  PictureInPicture2Icon,
   PlayIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -75,6 +81,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   GUIDE_TEMPLATE_PRESETS,
   TRANSLATION_PAIR_PRESETS,
@@ -148,6 +155,10 @@ interface ImmersivePlayerProps {
   customGuidePrompt: string;
   generatingGuide?: boolean;
   streamingChatText: string | null;
+  chatModelOptions?: Array<{ value: string; label: string }>;
+  selectedChatModel?: string;
+  onSelectChatModel?: (value: string) => void;
+  biliLoggedIn?: boolean;
   sidebarCollapsed: boolean;
   subSearchInputRef: React.RefObject<HTMLInputElement | null>;
   onToggleSidebar: () => void;
@@ -176,7 +187,12 @@ interface ImmersivePlayerProps {
   onAudioOnlyChange: (audioOnly: boolean) => void;
   onVideoQualityChange: (quality: string) => void;
   onTtsDubbingChange: (enabled: boolean) => void;
+  onToggleStarred?: (epId: string) => void;
   onToggleOffline: (epId: string) => void;
+  pipActive?: boolean;
+  pipMode?: "none" | "desktop" | "document" | "floating";
+  docPipContainer?: HTMLElement | null;
+  onTogglePip?: (enabled?: boolean) => void;
   onPauseDownload?: (epId: string) => void;
   onResumeDownload?: (epId: string) => void;
   onCancelDownload?: (epId: string) => void;
@@ -305,6 +321,10 @@ export function ImmersivePlayer({
   customGuidePrompt,
   generatingGuide = false,
   streamingChatText,
+  chatModelOptions = [],
+  selectedChatModel = "default",
+  onSelectChatModel,
+  biliLoggedIn = false,
   sidebarCollapsed,
   subSearchInputRef,
   onToggleSidebar,
@@ -333,7 +353,12 @@ export function ImmersivePlayer({
   onAudioOnlyChange,
   onVideoQualityChange,
   onTtsDubbingChange,
+  onToggleStarred,
   onToggleOffline,
+  pipActive = false,
+  pipMode = "none",
+  docPipContainer = null,
+  onTogglePip,
   onPauseDownload,
   onResumeDownload,
   onCancelDownload,
@@ -387,11 +412,57 @@ export function ImmersivePlayer({
     x: number;
     y: number;
   } | null>(null);
+  const [floatingPipOffset, setFloatingPipOffset] = useState<{
+    x: number;
+    y: number;
+  }>({ x: 0, y: 0 });
+  const [resizableController] = useState(() => createResizableController());
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const activeRowRef = useRef<HTMLDivElement | null>(null);
   const subViewportRef = useRef<HTMLDivElement | null>(null);
   const stageContainerRef = useRef<HTMLDivElement | null>(null);
   const videoBoxRef = useRef<HTMLDivElement | null>(null);
   const subtitleOverlayRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !el.textTracks) return;
+    const hideNativeTracks = () => {
+      for (let i = 0; i < el.textTracks.length; i++) {
+        el.textTracks[i].mode = "disabled";
+      }
+    };
+    hideNativeTracks();
+    el.textTracks.addEventListener?.("addtrack", hideNativeTracks);
+    return () => {
+      el.textTracks.removeEventListener?.("addtrack", hideNativeTracks);
+    };
+  }, [videoRef, videoStreamUrl]);
+
+  function handleStartFloatingPipDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || pipMode !== "floating") return;
+    if ((event.target as HTMLElement)?.closest("button")) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originX = floatingPipOffset.x;
+    const originY = floatingPipOffset.y;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      setFloatingPipOffset({
+        x: originX + (moveEvent.clientX - startX),
+        y: originY + (moveEvent.clientY - startY),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
 
   const activeSubtitlePos = dragSubtitlePos ?? {
     x: subtitleOverlayX,
@@ -570,30 +641,160 @@ export function ImmersivePlayer({
     await onSendChat(episode.id, prompt);
   }
 
-  function renderChatContent(content: string) {
-    const tokens = content.split(/(\[\d{2}:\d{2}\])/g);
+  function renderInlineChatTokens(text: string, keyPrefix: string) {
+    const tokenRe =
+      /(\[(?:\d{1,2}:)?\d{1,2}:\d{2}\]|\*\*[^*\n]+?\*\*|`[^`\n]+?`)/g;
+    const tokens = text.split(tokenRe);
     return tokens.map((token, index) => {
-      const match = token.match(/^\[(\d{2}):(\d{2})\]$/);
-      if (!match) {
-        return <Fragment key={`${index}-${token}`}>{token}</Fragment>;
+      if (!token) return null;
+      const tsMatch = token.match(/^\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]$/);
+      if (tsMatch) {
+        const hrs = tsMatch[1] ? Number(tsMatch[1]) : 0;
+        const mins = Number(tsMatch[2]);
+        const secs = Number(tsMatch[3]);
+        const totalSec = hrs * 3600 + mins * 60 + secs;
+        const label = tsMatch[1]
+          ? `${tsMatch[1]}:${tsMatch[2].padStart(2, "0")}:${tsMatch[3]}`
+          : `${tsMatch[2].padStart(2, "0")}:${tsMatch[3]}`;
+        return (
+          <Button
+            key={`${keyPrefix}-ts-${index}-${label}`}
+            className="tabular-nums mx-0.5 inline-flex h-5 rounded px-1.5 text-[11px] font-semibold align-baseline"
+            style={{
+              color: "var(--arbok-accent-text)",
+              background: "var(--arbok-accent-soft)",
+              borderColor: "var(--arbok-accent-border)",
+            }}
+            onClick={() => onSeek(totalSec, true)}
+          >
+            跳转 {label}
+          </Button>
+        );
       }
-      const sec = Number(match[1]) * 60 + Number(match[2]);
-      const label = `${match[1]}:${match[2]}`;
-      return (
-        <Button
-          key={`${index}-${label}`}
-          className="tabular-nums mx-0.5 inline-flex h-5 rounded px-1.5 text-[11px] font-semibold"
-          style={{
-            color: "var(--arbok-accent-text)",
-            background: "var(--arbok-accent-soft)",
-            borderColor: "var(--arbok-accent-border)",
-          }}
-          onClick={() => onSeek(sec, true)}
-        >
-          跳转 {label}
-        </Button>
-      );
+      if (token.startsWith("**") && token.endsWith("**") && token.length > 4) {
+        return (
+          <strong
+            key={`${keyPrefix}-b-${index}`}
+            className="font-semibold text-[var(--ui-foreground)]"
+          >
+            {renderInlineChatTokens(token.slice(2, -2), `${keyPrefix}-b-${index}`)}
+          </strong>
+        );
+      }
+      if (token.startsWith("`") && token.endsWith("`") && token.length > 2) {
+        return (
+          <code
+            key={`${keyPrefix}-c-${index}`}
+            className="rounded bg-[var(--arbok-surface)] px-1 py-0.5 font-mono text-[12px]"
+          >
+            {token.slice(1, -1)}
+          </code>
+        );
+      }
+      return <Fragment key={`${keyPrefix}-t-${index}`}>{token}</Fragment>;
     });
+  }
+
+  function renderChatContent(content: string) {
+    // Normalize single-paragraph numbered lists (e.g. "主要有五道坎： 1. ... 2. ...") onto separate lines.
+    const normalized = content
+      .replace(/\r\n/g, "\n")
+      .replace(/([。！？：:；;\])\s])(\s*)(\d{1,2}\.\s+)/g, (full, prev, _sp, num) => {
+        if (prev === "\n") return full;
+        return `${prev}\n${num}`;
+      });
+
+    const rawLines = normalized.split("\n");
+    const blocks: Array<
+      | { kind: "heading"; text: string }
+      | { kind: "ordered"; marker: string; text: string }
+      | { kind: "bullet"; text: string }
+      | { kind: "paragraph"; text: string }
+    > = [];
+
+    for (const rawLine of rawLines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const headingMatch = line.match(/^#{1,4}\s+(.+)$/);
+      if (headingMatch) {
+        blocks.push({ kind: "heading", text: headingMatch[1].trim() });
+        continue;
+      }
+
+      const orderedMatch = line.match(/^(\d{1,2})[.、)]\s+(.+)$/);
+      if (orderedMatch) {
+        blocks.push({
+          kind: "ordered",
+          marker: `${orderedMatch[1]}.`,
+          text: orderedMatch[2].trim(),
+        });
+        continue;
+      }
+
+      const bulletMatch = line.match(/^[-*•]\s+(.+)$/);
+      if (bulletMatch) {
+        blocks.push({ kind: "bullet", text: bulletMatch[1].trim() });
+        continue;
+      }
+
+      blocks.push({ kind: "paragraph", text: line });
+    }
+
+    if (blocks.length === 0) {
+      return renderInlineChatTokens(content, "raw");
+    }
+
+    return (
+      <div className="flex flex-col gap-2">
+        {blocks.map((block, idx) => {
+          if (block.kind === "heading") {
+            return (
+              <div
+                key={`h-${idx}`}
+                className="pt-1 text-[13.5px] font-semibold text-[var(--ui-foreground)]"
+              >
+                {renderInlineChatTokens(block.text, `h-${idx}`)}
+              </div>
+            );
+          }
+          if (block.kind === "ordered") {
+            return (
+              <div key={`ol-${idx}`} className="flex items-start gap-2 leading-relaxed">
+                <span
+                  className="tabular-nums mt-0.5 shrink-0 font-semibold"
+                  style={{ color: "var(--arbok-accent-text)" }}
+                >
+                  {block.marker}
+                </span>
+                <div className="min-w-0 flex-1 break-words">
+                  {renderInlineChatTokens(block.text, `ol-${idx}`)}
+                </div>
+              </div>
+            );
+          }
+          if (block.kind === "bullet") {
+            return (
+              <div key={`ul-${idx}`} className="flex items-start gap-2 leading-relaxed">
+                <span
+                  className="mt-2 size-1.5 shrink-0 rounded-full"
+                  style={{ background: "var(--arbok-accent-text)" }}
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1 break-words">
+                  {renderInlineChatTokens(block.text, `ul-${idx}`)}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <p key={`p-${idx}`} className="leading-relaxed break-words">
+              {renderInlineChatTokens(block.text, `p-${idx}`)}
+            </p>
+          );
+        })}
+      </div>
+    );
   }
 
   function renderDescriptionContent(text: string) {
@@ -701,11 +902,18 @@ export function ImmersivePlayer({
     asrJob?.status === "transcribing";
 
   return (
-    <Resizable className="arbok-resizable flex h-full w-full min-h-0 flex-1">
+    <Resizable
+      controller={resizableController}
+      onLayoutChange={(layout) => {
+        const rightSize = layout[1] ?? 36;
+        setRightPanelCollapsed(rightSize <= 0.5);
+      }}
+      className="arbok-resizable flex h-full w-full min-h-0 flex-1"
+    >
       <ResizablePanel
-        defaultSize={56}
+        id="player-stage"
+        defaultSize={64}
         minSize={30}
-        maxSize={78}
         className="flex h-full flex-col bg-[var(--ui-background)]"
       >
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-[var(--ui-border)] px-4">
@@ -765,6 +973,19 @@ export function ImmersivePlayer({
                   side="bottom"
                 />
               )}
+            {rightPanelCollapsed && (
+              <Button
+                aria-label="展开右侧字幕栏"
+                title="展开右侧字幕栏"
+                className="size-8 shrink-0 border-transparent bg-transparent p-0"
+                onClick={() => {
+                  resizableController.expand("player-workbench");
+                  setRightPanelCollapsed(false);
+                }}
+              >
+                <PanelRightOpenIcon className="size-4" aria-hidden="true" />
+              </Button>
+            )}
           </div>
         </div>
 
@@ -772,224 +993,396 @@ export function ImmersivePlayer({
           <ScrollAreaViewport role="region" aria-label="媒体播放区">
             <ScrollAreaContent className="flex w-full flex-col justify-center px-5 py-4">
               {showVideo ? (
-                <div ref={stageContainerRef} className="flex w-full flex-col items-center">
-                  <div
-                    ref={videoBoxRef}
-                    className="group/stage relative flex aspect-video flex-col justify-between overflow-hidden rounded-2xl p-4 text-white shadow-xl transition-[width] duration-75"
-                    style={{
-                      width: `${videoScalePct}%`,
-                      background:
-                        youtubeVideoId || videoStreamUrl
-                          ? "#09090b"
-                          : episode.gradient,
-                    }}
-                  >
-                    {youtubeVideoId ? (
-                      <YouTubeHdPlayer
-                        ref={ytPlayerRef}
-                        videoId={youtubeVideoId}
-                        initialTimeSec={episode.positionSec}
-                        isPlaying={isPlaying}
-                        playbackRate={playbackRate}
-                        volume={volume}
-                        preferredQuality={videoQuality}
-                        onTimeUpdate={onYouTubeTimeUpdate}
-                        onDurationReady={onYouTubeDurationReady}
-                        onPlayingChange={onYouTubePlayingChange}
-                        onBufferingChange={onYouTubeBufferingChange}
-                        onActualQualityChange={onYouTubeActualQualityChange}
-                        onEnded={onYouTubeEnded}
-                        onEmbedUnavailable={onYouTubeEmbedUnavailable}
-                      />
-                    ) : (
-                      videoStreamUrl && (
-                        <video
-                          ref={videoRef}
-                          src={videoStreamUrl}
-                          poster={episode.coverUrl}
-                          playsInline
-                          preload="metadata"
-                          className="absolute inset-0 h-full w-full bg-black object-contain"
-                          onClick={onTogglePlay}
-                          onTimeUpdate={onVideoTimeUpdate}
-                          onLoadedMetadata={onVideoLoadedMetadata}
-                          onWaiting={onVideoWaiting}
-                          onCanPlay={onVideoCanPlay}
-                          onPlaying={onVideoCanPlay}
-                          onEnded={onVideoEnded}
-                          onError={onVideoError}
-                        />
-                      )
-                    )}
+                (() => {
+                  const isPip = pipActive && pipMode !== "none";
+                  const pipZhPx = isPip
+                    ? Math.max(14, Math.min(Math.round(overlayZhPx * 0.55), 26))
+                    : overlayZhPx;
+                  const pipOrigPx = isPip
+                    ? Math.max(12, Math.min(Math.round(overlayOrigPx * 0.55), 20))
+                    : overlayOrigPx;
 
-                    <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium backdrop-blur-md">
-                          <span
-                            className={`size-1.5 rounded-full ${
-                              isBuffering ? "bg-amber-400 animate-pulse" : "bg-emerald-400"
-                            }`}
+                  const videoStageNode = (
+                    <div
+                      ref={stageContainerRef}
+                      data-testid={isPip ? "pip-stage" : "video-stage"}
+                      className={
+                        pipMode === "desktop" && pipActive
+                          ? "fixed inset-0 z-50 flex h-screen w-screen items-center justify-center bg-[#18181b] p-2.5"
+                          : pipMode === "document" && pipActive
+                            ? "flex h-screen w-screen items-center justify-center bg-[#18181b] p-2"
+                            : pipMode === "floating" && pipActive
+                              ? "fixed right-5 bottom-5 z-50 w-[440px] max-w-[calc(100vw-2rem)] rounded-2xl bg-[#18181b] p-1.5 shadow-2xl ring-1 ring-white/15"
+                              : "flex w-full flex-col items-center"
+                      }
+                      style={
+                        pipMode === "floating" && pipActive
+                          ? {
+                              transform: `translate3d(${floatingPipOffset.x}px, ${floatingPipOffset.y}px, 0)`,
+                            }
+                          : undefined
+                      }
+                    >
+                      <div
+                        ref={videoBoxRef}
+                        className={
+                          isPip
+                            ? "group/stage group/pip relative flex aspect-video h-full w-full flex-col justify-between overflow-hidden rounded-xl p-3 text-white shadow-xl"
+                            : "group/stage relative flex aspect-video flex-col justify-between overflow-hidden rounded-2xl p-4 text-white shadow-xl transition-[width] duration-75"
+                        }
+                        style={{
+                          width: isPip ? "100%" : `${videoScalePct}%`,
+                          background:
+                            youtubeVideoId || videoStreamUrl
+                              ? "#09090b"
+                              : episode.gradient,
+                        }}
+                      >
+                        {youtubeVideoId ? (
+                          <YouTubeHdPlayer
+                            ref={ytPlayerRef}
+                            videoId={youtubeVideoId}
+                            initialTimeSec={episode.positionSec}
+                            isPlaying={isPlaying}
+                            playbackRate={playbackRate}
+                            volume={volume}
+                            preferredQuality={videoQuality}
+                            onTimeUpdate={onYouTubeTimeUpdate}
+                            onDurationReady={onYouTubeDurationReady}
+                            onPlayingChange={onYouTubePlayingChange}
+                            onBufferingChange={onYouTubeBufferingChange}
+                            onActualQualityChange={onYouTubeActualQualityChange}
+                            onEnded={onYouTubeEnded}
+                            onEmbedUnavailable={onYouTubeEmbedUnavailable}
                           />
-                          {isBuffering
-                            ? "正在缓冲媒体流…"
-                            : youtubeVideoId
-                              ? `YouTube 高清直连 · 实际 ${actualQuality ?? videoQuality}${
-                                  maxAvailableQuality &&
-                                  maxAvailableQuality !== videoQuality &&
-                                  (videoQuality === "4K" || videoQuality === "2K")
-                                    ? `（片源最高 ${maxAvailableQuality}）`
-                                    : ""
-                                }`
-                              : `本地流代理 · 实际 ${actualQuality ?? videoQuality} 无广告`}
-                        </span>
-                        {ttsDubbingEnabled && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-md">
-                            <span
-                              className={`size-1.5 rounded-full ${
-                                ttsDubbingStatus === "catching_up"
-                                  ? "bg-amber-400 animate-pulse"
-                                  : "bg-sky-400 animate-pulse"
-                              }`}
+                        ) : (
+                          videoStreamUrl && (
+                            <video
+                              ref={videoRef}
+                              src={videoStreamUrl}
+                              poster={episode.coverUrl}
+                              playsInline
+                              preload="metadata"
+                              className="absolute inset-0 h-full w-full bg-black object-contain"
+                              onClick={onTogglePlay}
+                              onTimeUpdate={onVideoTimeUpdate}
+                              onLoadedMetadata={(e) => {
+                                const tracks = e.currentTarget.textTracks;
+                                if (tracks) {
+                                  for (let i = 0; i < tracks.length; i++) {
+                                    tracks[i].mode = "disabled";
+                                  }
+                                }
+                                onVideoLoadedMetadata();
+                              }}
+                              onWaiting={onVideoWaiting}
+                              onCanPlay={onVideoCanPlay}
+                              onPlaying={onVideoCanPlay}
+                              onEnded={onVideoEnded}
+                              onError={onVideoError}
                             />
-                            {ttsDubbingStatus === "catching_up"
-                              ? "中文播报追赶中 · 已暂停视频等待同步"
-                              : "中文 TTS 播报中"}
-                          </span>
+                          )
+                        )}
+
+                        {isPip ? (
+                          <div
+                            onPointerDown={handleStartFloatingPipDrag}
+                            className={`arbok-pip-drag-region pointer-events-auto relative z-30 flex items-center justify-between gap-2 rounded-lg bg-black/65 px-2.5 py-1.5 opacity-0 backdrop-blur-md transition-opacity group-hover/pip:opacity-100 focus-within:opacity-100 ${
+                              pipMode === "floating" ? "cursor-move" : ""
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/95">
+                              {episode.title}
+                            </span>
+                            <div className="arbok-pip-no-drag flex shrink-0 items-center gap-1">
+                              <Button
+                                aria-label="画中画快退 15 秒"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                                onClick={() => onSkip(-15)}
+                              >
+                                <RotateCcwIcon className="size-3" aria-hidden="true" />
+                              </Button>
+                              <Button
+                                aria-label={isPlaying ? "画中画暂停" : "画中画播放"}
+                                className="size-6 rounded-full border-transparent bg-white/15 p-0 text-white hover:bg-white/25"
+                                onClick={onTogglePlay}
+                              >
+                                {isPlaying ? (
+                                  <PauseIcon className="size-3" aria-hidden="true" />
+                                ) : (
+                                  <PlayIcon className="size-3 translate-x-[0.5px]" aria-hidden="true" />
+                                )}
+                              </Button>
+                              <Button
+                                aria-label="画中画快进 15 秒"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                                onClick={() => onSkip(15)}
+                              >
+                                <RotateCwIcon className="size-3" aria-hidden="true" />
+                              </Button>
+                              {canBilingual && (
+                                <Button
+                                  aria-label="画中画切换字幕"
+                                  className="h-6 rounded-full border-transparent bg-transparent px-1.5 text-[10px] font-medium text-white hover:bg-white/15"
+                                  onClick={() => {
+                                    const nextMode: SubtitleMode =
+                                      subtitleMode === "bilingual"
+                                        ? "zh"
+                                        : subtitleMode === "zh"
+                                          ? "orig"
+                                          : subtitleMode === "orig"
+                                            ? "none"
+                                            : "bilingual";
+                                    onSubtitleModeChange(nextMode);
+                                  }}
+                                >
+                                  {subtitleMode === "bilingual"
+                                    ? "双语"
+                                    : subtitleMode === "zh"
+                                      ? "中"
+                                      : subtitleMode === "orig"
+                                        ? "原"
+                                        : "关"}
+                                </Button>
+                              )}
+                              <Button
+                                aria-label="退出画中画"
+                                title="退出画中画 (Esc)"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/20"
+                                onClick={() => onTogglePip?.(false)}
+                              >
+                                <Minimize2Icon className="size-3" aria-hidden="true" />
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium backdrop-blur-md">
+                                <span
+                                  className={`size-1.5 rounded-full ${
+                                    isBuffering ? "bg-amber-400 animate-pulse" : "bg-emerald-400"
+                                  }`}
+                                />
+                                {isBuffering
+                                  ? "正在缓冲媒体流…"
+                                  : youtubeVideoId
+                                    ? `YouTube 高清直连 · 实际 ${actualQuality ?? videoQuality}${
+                                        maxAvailableQuality &&
+                                        maxAvailableQuality !== videoQuality &&
+                                        (videoQuality === "4K" || videoQuality === "2K")
+                                          ? `（片源最高 ${maxAvailableQuality}）`
+                                          : ""
+                                      }`
+                                    : `本地流代理 · 实际 ${actualQuality ?? videoQuality} 无广告`}
+                              </span>
+                              {ttsDubbingEnabled && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-md">
+                                  <span
+                                    className={`size-1.5 rounded-full ${
+                                      ttsDubbingStatus === "catching_up"
+                                        ? "bg-amber-400 animate-pulse"
+                                        : "bg-sky-400 animate-pulse"
+                                    }`}
+                                  />
+                                  {ttsDubbingStatus === "catching_up"
+                                    ? "中文播报追赶中 · 已暂停视频等待同步"
+                                    : "中文 TTS 播报中"}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-black/55 p-1 backdrop-blur-md">
+                              <Button
+                                aria-label="缩小视频画面"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                                onClick={() =>
+                                  setVideoScalePct((pct) => Math.max(45, pct - 10))
+                                }
+                              >
+                                <MinusIcon className="size-3.5" aria-hidden="true" />
+                              </Button>
+                              <Button
+                                aria-label="还原视频画面大小"
+                                className="tabular-nums h-6 rounded-full border-transparent bg-transparent px-1.5 text-[11px] text-white hover:bg-white/15"
+                                onClick={() => setVideoScalePct(100)}
+                              >
+                                {videoScalePct}%
+                              </Button>
+                              <Button
+                                aria-label="放大视频画面"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                                onClick={() =>
+                                  setVideoScalePct((pct) => Math.min(100, pct + 10))
+                                }
+                              >
+                                <PlusIcon className="size-3.5" aria-hidden="true" />
+                              </Button>
+                              <Button
+                                aria-label="画中画播放"
+                                title="画中画播放（支持中英字幕 · 快捷键 P）"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                                onClick={() => onTogglePip?.(true)}
+                              >
+                                <PictureInPicture2Icon className="size-3.5" aria-hidden="true" />
+                              </Button>
+                              <Button
+                                aria-label="全屏播放视频"
+                                className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
+                                onClick={handleToggleFullscreen}
+                              >
+                                <Maximize2Icon className="size-3" aria-hidden="true" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {!youtubeVideoId && !videoStreamUrl && (
+                          <div className="relative z-10 flex flex-col items-center gap-2 text-center">
+                            <div className="text-xl font-bold tracking-tight">
+                              {episode.coverLabel}
+                            </div>
+                            <div className="text-xs text-white/85">
+                              {isBuffering
+                                ? "正在加载音频流…"
+                                : isPlaying
+                                  ? "播放中 · 点击右侧任意字幕可毫秒级跳转"
+                                  : "已暂停 · 按 Space 开始播放"}
+                            </div>
+                            <EqualizerBars playing={isPlaying} />
+                          </div>
+                        )}
+
+                        {isDraggingSubtitle && (
+                          <div
+                            aria-hidden="true"
+                            className="fixed inset-0 z-40 cursor-grabbing"
+                          />
+                        )}
+
+                        {subtitleMode !== "none" &&
+                          activeSeg &&
+                          ((canBilingual && subtitleMode !== "orig" && activeSeg.zh && pipZhPx > 0) ||
+                            (subtitleMode !== "zh" && pipOrigPx > 0)) && (
+                            <div
+                              ref={subtitleOverlayRef}
+                              data-testid="video-subtitle-overlay"
+                              title="按住拖动可自由移动字幕位置，双击恢复默认位置"
+                              onPointerDown={handleStartSubtitleDrag}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                setDragSubtitlePos(null);
+                                onSubtitleOverlayPosChange?.(50, 84);
+                              }}
+                              className={`pointer-events-auto absolute z-20 max-w-[92%] touch-none select-none text-center text-white antialiased transition-shadow ${overlayStyleClass} ${fontClass} ${
+                                isDraggingSubtitle
+                                  ? "cursor-grabbing ring-2 ring-sky-400/85"
+                                  : "cursor-grab hover:ring-1 hover:ring-white/45"
+                              }`}
+                              style={{
+                                left: `${activeSubtitlePos.x}%`,
+                                top: `${activeSubtitlePos.y}%`,
+                                transform: "translate(-50%, -50%)",
+                              }}
+                            >
+                              {canBilingual &&
+                                subtitleMode !== "orig" &&
+                                activeSeg.zh &&
+                                pipZhPx > 0 && (
+                                  <div
+                                    className="font-semibold leading-[1.32] tracking-[0.015em] text-white"
+                                    style={{ fontSize: `${pipZhPx}px` }}
+                                  >
+                                    {activeSeg.zh}
+                                  </div>
+                                )}
+                              {(!canBilingual ||
+                                !activeSeg.zh ||
+                                subtitleMode !== "zh") &&
+                                pipOrigPx > 0 && (
+                                  <div
+                                    translate="no"
+                                    className={`notranslate leading-[1.38] ${
+                                      canBilingual &&
+                                      activeSeg.zh &&
+                                      subtitleMode === "bilingual"
+                                        ? "mt-1 text-white/90"
+                                        : "font-medium text-white"
+                                    }`}
+                                    style={{ fontSize: `${pipOrigPx}px` }}
+                                  >
+                                    {activeSeg.orig}
+                                  </div>
+                                )}
+                            </div>
+                          )}
+
+                        {!isPip && (
+                          /* Pointer drag handle for free resizing of the video stage */
+                          <div
+                            aria-hidden="true"
+                            title="拖拽拉伸或缩小播放器画面（双击恢复 100%）"
+                            onPointerDown={handleStartStageDrag}
+                            onDoubleClick={() => setVideoScalePct(100)}
+                            className={`absolute right-1.5 bottom-1.5 z-20 flex size-6 cursor-nwse-resize items-end justify-end rounded-md p-1 transition-opacity ${
+                              isDraggingStage
+                                ? "bg-white/25 opacity-100"
+                                : "opacity-55 hover:bg-white/20 hover:opacity-100"
+                            }`}
+                          >
+                            <span className="block size-2.5 border-r-2 border-b-2 border-white/90" />
+                          </div>
                         )}
                       </div>
-
-                      <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-black/55 p-1 backdrop-blur-md">
-                        <Button
-                          aria-label="缩小视频画面"
-                          className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
-                          onClick={() =>
-                            setVideoScalePct((pct) => Math.max(45, pct - 10))
-                          }
-                        >
-                          <MinusIcon className="size-3.5" aria-hidden="true" />
-                        </Button>
-                        <Button
-                          aria-label="还原视频画面大小"
-                          className="tabular-nums h-6 rounded-full border-transparent bg-transparent px-1.5 text-[11px] text-white hover:bg-white/15"
-                          onClick={() => setVideoScalePct(100)}
-                        >
-                          {videoScalePct}%
-                        </Button>
-                        <Button
-                          aria-label="放大视频画面"
-                          className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
-                          onClick={() =>
-                            setVideoScalePct((pct) => Math.min(100, pct + 10))
-                          }
-                        >
-                          <PlusIcon className="size-3.5" aria-hidden="true" />
-                        </Button>
-                        <Button
-                          aria-label="全屏播放视频"
-                          className="size-6 rounded-full border-transparent bg-transparent p-0 text-white hover:bg-white/15"
-                          onClick={handleToggleFullscreen}
-                        >
-                          <Maximize2Icon className="size-3" aria-hidden="true" />
-                        </Button>
-                      </div>
                     </div>
+                  );
 
-                    {!youtubeVideoId && !videoStreamUrl && (
-                      <div className="relative z-10 flex flex-col items-center gap-2 text-center">
-                        <div className="text-xl font-bold tracking-tight">
-                          {episode.coverLabel}
+                  if (pipActive && pipMode === "document" && docPipContainer) {
+                    return (
+                      <>
+                        {createPortal(videoStageNode, docPipContainer)}
+                        <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[var(--ui-border)] bg-[var(--arbok-surface)] p-6 text-center">
+                          <PictureInPicture2Icon
+                            className="size-8 text-[var(--arbok-accent-text)]"
+                            aria-hidden="true"
+                          />
+                          <div className="text-sm font-semibold text-[var(--ui-foreground)]">
+                            正在画中画浮窗中播放
+                          </div>
+                          <Button
+                            data-variant="solid"
+                            onClick={() => onTogglePip?.(false)}
+                          >
+                            退出画中画并回到主窗口
+                          </Button>
                         </div>
-                        <div className="text-xs text-white/85">
-                          {isBuffering
-                            ? "正在加载音频流…"
-                            : isPlaying
-                              ? "播放中 · 点击右侧任意字幕可毫秒级跳转"
-                              : "已暂停 · 按 Space 开始播放"}
-                        </div>
-                        <EqualizerBars playing={isPlaying} />
-                      </div>
-                    )}
+                      </>
+                    );
+                  }
 
-                    {isDraggingSubtitle && (
-                      <div
-                        aria-hidden="true"
-                        className="fixed inset-0 z-40 cursor-grabbing"
-                      />
-                    )}
-
-                    {subtitleMode !== "none" &&
-                      activeSeg &&
-                      ((canBilingual && subtitleMode !== "orig" && activeSeg.zh && overlayZhPx > 0) ||
-                        (subtitleMode !== "zh" && overlayOrigPx > 0)) && (
-                        <div
-                          ref={subtitleOverlayRef}
-                          data-testid="video-subtitle-overlay"
-                          title="按住拖动可自由移动字幕位置，双击恢复默认位置"
-                          onPointerDown={handleStartSubtitleDrag}
-                          onDoubleClick={(e) => {
-                            e.stopPropagation();
-                            setDragSubtitlePos(null);
-                            onSubtitleOverlayPosChange?.(50, 84);
-                          }}
-                          className={`pointer-events-auto absolute z-20 max-w-[92%] touch-none select-none text-center text-white antialiased transition-shadow ${overlayStyleClass} ${fontClass} ${
-                            isDraggingSubtitle
-                              ? "cursor-grabbing ring-2 ring-sky-400/85"
-                              : "cursor-grab hover:ring-1 hover:ring-white/45"
-                          }`}
-                          style={{
-                            left: `${activeSubtitlePos.x}%`,
-                            top: `${activeSubtitlePos.y}%`,
-                            transform: "translate(-50%, -50%)",
-                          }}
-                        >
-                          {canBilingual &&
-                            subtitleMode !== "orig" &&
-                            activeSeg.zh &&
-                            overlayZhPx > 0 && (
-                              <div
-                                className="font-semibold leading-[1.32] tracking-[0.015em] text-white"
-                                style={{ fontSize: `${overlayZhPx}px` }}
-                              >
-                                {activeSeg.zh}
-                              </div>
-                            )}
-                          {(!canBilingual ||
-                            !activeSeg.zh ||
-                            subtitleMode !== "zh") &&
-                            overlayOrigPx > 0 && (
-                              <div
-                                translate="no"
-                                className={`notranslate leading-[1.38] ${
-                                  canBilingual &&
-                                  activeSeg.zh &&
-                                  subtitleMode === "bilingual"
-                                    ? "mt-1 text-white/90"
-                                    : "font-medium text-white"
-                                }`}
-                                style={{ fontSize: `${overlayOrigPx}px` }}
-                              >
-                                {activeSeg.orig}
-                              </div>
-                            )}
+                  return (
+                    <>
+                      {pipActive && pipMode === "floating" && (
+                        <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[var(--ui-border)] bg-[var(--arbok-surface)] p-6 text-center">
+                          <PictureInPicture2Icon
+                            className="size-8 text-[var(--arbok-accent-text)]"
+                            aria-hidden="true"
+                          />
+                          <div className="text-sm font-semibold text-[var(--ui-foreground)]">
+                            已开启右下角画中画浮窗（可拖动，支持中英字幕）
+                          </div>
+                          <Button
+                            data-variant="solid"
+                            onClick={() => onTogglePip?.(false)}
+                          >
+                            退出画中画
+                          </Button>
                         </div>
                       )}
-
-                    {/* Pointer drag handle for free resizing of the video stage */}
-                    <div
-                      aria-hidden="true"
-                      title="拖拽拉伸或缩小播放器画面（双击恢复 100%）"
-                      onPointerDown={handleStartStageDrag}
-                      onDoubleClick={() => setVideoScalePct(100)}
-                      className={`absolute right-1.5 bottom-1.5 z-20 flex size-6 cursor-nwse-resize items-end justify-end rounded-md p-1 transition-opacity ${
-                        isDraggingStage
-                          ? "bg-white/25 opacity-100"
-                          : "opacity-55 hover:bg-white/20 hover:opacity-100"
-                      }`}
-                    >
-                      <span className="block size-2.5 border-r-2 border-b-2 border-white/90" />
-                    </div>
-                  </div>
-                </div>
+                      {videoStageNode}
+                    </>
+                  );
+                })()
               ) : (
                 <div className="flex flex-col items-center py-3">
                   <div
@@ -1289,6 +1682,24 @@ export function ImmersivePlayer({
                     </div>
                   </div>
 
+                  <Toggle
+                    pressed={Boolean(episode.isStarred)}
+                    aria-label={episode.isStarred ? "取消收藏" : "收藏单集"}
+                    title={episode.isStarred ? "取消收藏" : "收藏单集"}
+                    className="size-8 shrink-0 p-0"
+                    onPressedChange={() => onToggleStarred?.(episode.id)}
+                  >
+                    <ToggleIcon>
+                      <BookmarkIcon
+                        className={`size-4 ${
+                          episode.isStarred
+                            ? "fill-current text-[var(--arbok-settings-icon-active)]"
+                            : ""
+                        }`}
+                      />
+                    </ToggleIcon>
+                  </Toggle>
+
                   {downloadJob &&
                   (downloadJob.status === "downloading" ||
                     downloadJob.status === "queued" ||
@@ -1455,7 +1866,10 @@ export function ImmersivePlayer({
       <ResizableHandle aria-label="调整播放区与阅读区宽度" />
 
       <ResizablePanel
-        minSize={35}
+        id="player-workbench"
+        defaultSize={36}
+        minSize={24}
+        collapsible
         className="flex h-full flex-col bg-[var(--ui-background)]"
       >
         <Tabs
@@ -1482,10 +1896,23 @@ export function ImmersivePlayer({
               </TabsTab>
             </TabsList>
 
-            <Button onClick={onOpenExport}>
-              <ShareIcon className="size-3.5" aria-hidden="true" />
-              <span>导出 MD</span>
-            </Button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button onClick={onOpenExport}>
+                <ShareIcon className="size-3.5" aria-hidden="true" />
+                <span>导出 MD</span>
+              </Button>
+              <Button
+                aria-label="收起右侧字幕栏"
+                title="收起右侧字幕栏"
+                className="size-8 shrink-0 border-transparent bg-transparent p-0"
+                onClick={() => {
+                  resizableController.collapse("player-workbench");
+                  setRightPanelCollapsed(true);
+                }}
+              >
+                <PanelRightCloseIcon className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
           </div>
 
           <TabsPanel
@@ -1578,7 +2005,9 @@ export function ImmersivePlayer({
                   <Button onClick={onOpenAsrSettings}>配置 ASR 引擎</Button>
                   {episode.platform === "bilibili" && (
                     <Button onClick={onOpenBiliSettings}>
-                      登录 B站解锁官方 AI 字幕
+                      {biliLoggedIn
+                        ? "已登录 B站（管理账号）"
+                        : "登录 B站解锁官方 AI 字幕"}
                     </Button>
                   )}
                 </div>
@@ -2208,6 +2637,37 @@ export function ImmersivePlayer({
                 </Button>
               ))}
             </div>
+
+            {chatModelOptions.length > 0 && onSelectChatModel && (
+              <div className="flex shrink-0 items-center gap-2 border-t border-[var(--ui-border)] bg-[var(--arbok-surface)]/60 px-4 py-1.5">
+                <span className="shrink-0 text-[11px] font-medium text-[var(--ui-muted-foreground)]">
+                  问答模型
+                </span>
+                <Select
+                  items={chatModelOptions}
+                  value={selectedChatModel}
+                  onValueChange={(next) => {
+                    if (next) onSelectChatModel(next);
+                  }}
+                >
+                  <SelectLabel className="sr-only">AI 问答模型</SelectLabel>
+                  <SelectTrigger className="h-7 w-full max-w-[300px] text-xs">
+                    <SelectValue />
+                    <ChevronDownIcon className="size-3.5" aria-hidden="true" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {chatModelOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                        <SelectItemIndicator>
+                          <CheckIcon className="size-3.5" aria-hidden="true" />
+                        </SelectItemIndicator>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <form
               onSubmit={handleChatSubmit}

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("arbokDesktop", {
   setAutoDownload: (enabled) =>
     ipcRenderer.invoke("arbok:set-auto-download", Boolean(enabled)),
   quitAndInstall: () => ipcRenderer.invoke("arbok:quit-and-install"),
+  setPipMode: (enabled) => ipcRenderer.invoke("arbok:set-pip", Boolean(enabled)),
   onUpdateEvent: (listener) => {
     const wrapped = (_event, payload) => listener(payload);
     ipcRenderer.on("arbok:update-event", wrapped);

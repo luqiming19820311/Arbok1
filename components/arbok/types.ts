@@ -14,9 +14,13 @@ export type CloudTtsProviderId =
   | "doubao-tts"
   | "deepseek-tts"
   | "xiaomi-mimo"
-  | "xiaomi-mimo-cn"
   | "qwen-tts"
   | "openai-tts"
+  | "minimax-tts"
+  | "siliconflow-tts"
+  | "stepfun-tts"
+  | "elevenlabs-tts"
+  | "fish-audio-tts"
   | "edge-tts";
 
 export type TranslationPairId =
@@ -156,10 +160,18 @@ export interface EnvDependency {
 export interface LocalTtsModel {
   id: string;
   name: string;
-  engine: "mimo-audio";
+  engine:
+    | "mimo-audio"
+    | "kokoro"
+    | "cosyvoice"
+    | "chattts"
+    | "fish-speech"
+    | "sherpa-onnx";
   repoId: string;
   sizeLabel: string;
   description: string;
+  defaultBaseUrl?: string;
+  voices?: Array<{ value: string; label: string }>;
   installed: boolean;
   localPath?: string;
 }
@@ -303,6 +315,7 @@ export interface Episode {
   isBilingual: boolean;
   hasAiGuide: boolean;
   isOffline: boolean;
+  isStarred?: boolean;
   gradient: string;
   coverLabel: string;
   coverKicker?: string;

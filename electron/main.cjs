@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, utilityProcess } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -19,6 +19,9 @@ let mainWindow = null;
 let serverProcess = null;
 let serverPort = 3000;
 let isQuitting = false;
+let isPipActive = false;
+let prePipWindowState = null;
+let lastPipBounds = null;
 
 function buildEnrichedPath() {
   const home = os.homedir();
@@ -92,6 +95,19 @@ function getStandaloneServerDir() {
   return path.join(__dirname, "..", ".next", "standalone");
 }
 
+function resolveMacHelperExecutable() {
+  if (process.platform !== "darwin") return null;
+  const frameworksDir = path.resolve(path.dirname(process.execPath), "..", "Frameworks");
+  if (!fs.existsSync(frameworksDir)) return null;
+  const helperApp = fs
+    .readdirSync(frameworksDir)
+    .find((name) => /Helper\.app$/i.test(name) && !/\((GPU|Plugin|Renderer)\)/i.test(name));
+  if (!helperApp) return null;
+  const binName = helperApp.replace(/\.app$/i, "");
+  const helperBin = path.join(frameworksDir, helperApp, "Contents", "MacOS", binName);
+  return fs.existsSync(helperBin) ? helperBin : null;
+}
+
 async function startEmbeddedServer() {
   if (isDev && process.env.ARBOK_DEV_URL) {
     return process.env.ARBOK_DEV_URL;
@@ -107,9 +123,8 @@ async function startEmbeddedServer() {
   const userDataDir = app.getPath("userData");
   fs.mkdirSync(userDataDir, { recursive: true });
 
-  const env = {
+  const baseEnv = {
     ...process.env,
-    ELECTRON_RUN_AS_NODE: "1",
     NODE_ENV: "production",
     HOSTNAME: "127.0.0.1",
     PORT: String(serverPort),
@@ -118,31 +133,60 @@ async function startEmbeddedServer() {
   };
 
   let stderrLog = "";
-  serverProcess = spawn(process.execPath, [serverScript], {
-    cwd: standaloneDir,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
 
-  serverProcess.stderr?.on("data", (chunk) => {
-    stderrLog = (stderrLog + chunk.toString("utf8")).slice(-4000);
-  });
+  // Use Electron's utilityProcess (backed by LSUIElement Helper) so macOS never spawns a Dock "exec" icon.
+  if (utilityProcess && typeof utilityProcess.fork === "function") {
+    const child = utilityProcess.fork(serverScript, [], {
+      cwd: standaloneDir,
+      env: baseEnv,
+      stdio: "pipe",
+      serviceName: "Arbok Embedded Server",
+    });
+    serverProcess = child;
 
-  serverProcess.on("exit", (code) => {
-    if (!isQuitting && code !== 0) {
-      console.error("[Arbok server exited unexpectedly]", code, stderrLog);
-    }
-    serverProcess = null;
-  });
+    child.stderr?.on("data", (chunk) => {
+      stderrLog = (stderrLog + chunk.toString("utf8")).slice(-4000);
+    });
+
+    child.on("exit", (code) => {
+      if (!isQuitting && code !== 0) {
+        console.error("[Arbok server exited unexpectedly]", code, stderrLog);
+      }
+      if (serverProcess === child) {
+        serverProcess = null;
+      }
+    });
+  } else {
+    const helperBin = resolveMacHelperExecutable();
+    const child = spawn(helperBin || process.execPath, [serverScript], {
+      cwd: standaloneDir,
+      env: { ...baseEnv, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    serverProcess = child;
+
+    child.stderr?.on("data", (chunk) => {
+      stderrLog = (stderrLog + chunk.toString("utf8")).slice(-4000);
+    });
+
+    child.on("exit", (code) => {
+      if (!isQuitting && code !== 0) {
+        console.error("[Arbok server exited unexpectedly]", code, stderrLog);
+      }
+      if (serverProcess === child) {
+        serverProcess = null;
+      }
+    });
+  }
 
   await waitForServerReady(serverPort, 30000);
   return `http://127.0.0.1:${serverPort}`;
 }
 
 function stopEmbeddedServer() {
-  if (serverProcess && !serverProcess.killed) {
+  if (serverProcess) {
     try {
-      serverProcess.kill("SIGTERM");
+      serverProcess.kill();
     } catch {
       // ignore
     }
@@ -273,6 +317,67 @@ ipcMain.handle("arbok:quit-and-install", () => {
   }
 });
 
+ipcMain.handle("arbok:set-pip", (_event, enabled) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const next = Boolean(enabled);
+  if (next === isPipActive) return isPipActive;
+
+  if (next) {
+    prePipWindowState = {
+      bounds: mainWindow.getBounds(),
+      wasMaximized: mainWindow.isMaximized(),
+      wasFullScreen: mainWindow.isFullScreen(),
+    };
+    if (mainWindow.isFullScreen()) {
+      mainWindow.setFullScreen(false);
+    }
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    }
+
+    const display = screen.getDisplayMatching(mainWindow.getBounds());
+    const workArea = display.workArea;
+    const pipWidth = lastPipBounds?.width ?? 520;
+    const pipHeight = lastPipBounds?.height ?? 320;
+    const pipX =
+      typeof lastPipBounds?.x === "number"
+        ? Math.max(workArea.x, Math.min(workArea.x + workArea.width - pipWidth, lastPipBounds.x))
+        : workArea.x + workArea.width - pipWidth - 24;
+    const pipY =
+      typeof lastPipBounds?.y === "number"
+        ? Math.max(workArea.y, Math.min(workArea.y + workArea.height - pipHeight, lastPipBounds.y))
+        : workArea.y + workArea.height - pipHeight - 24;
+
+    mainWindow.setMinimumSize(320, 180);
+    mainWindow.setBounds(
+      { x: Math.round(pipX), y: Math.round(pipY), width: Math.round(pipWidth), height: Math.round(pipHeight) },
+      true
+    );
+    mainWindow.setAspectRatio(16 / 9);
+    mainWindow.setAlwaysOnTop(true, "floating");
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    isPipActive = true;
+    return true;
+  }
+
+  lastPipBounds = mainWindow.getBounds();
+  mainWindow.setAlwaysOnTop(false);
+  mainWindow.setVisibleOnAllWorkspaces(false);
+  mainWindow.setAspectRatio(0);
+  mainWindow.setMinimumSize(1024, 680);
+  if (prePipWindowState?.bounds) {
+    mainWindow.setBounds(prePipWindowState.bounds, true);
+  } else {
+    mainWindow.setSize(1380, 880, true);
+  }
+  if (prePipWindowState?.wasMaximized) {
+    mainWindow.maximize();
+  }
+  prePipWindowState = null;
+  isPipActive = false;
+  return false;
+});
+
 async function createWindow(url) {
   mainWindow = new BrowserWindow({
     width: 1380,
@@ -301,6 +406,8 @@ async function createWindow(url) {
   });
 
   mainWindow.on("closed", () => {
+    isPipActive = false;
+    prePipWindowState = null;
     mainWindow = null;
   });
 

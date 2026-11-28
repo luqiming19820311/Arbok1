@@ -24,6 +24,17 @@ export function evaluateTtsSync(input: TtsSyncInput): TtsSyncDecision {
   return { action: "hold", lag };
 }
 
+export function canResumePausedTtsAudio(
+  audio: { paused: boolean; ended: boolean; currentTime: number; duration: number } | null
+): boolean {
+  if (!audio) return false;
+  if (audio.ended || !audio.paused) return false;
+  if (Number.isFinite(audio.duration) && audio.duration > 0) {
+    return audio.currentTime > 0 && audio.currentTime < audio.duration - 0.05;
+  }
+  return audio.currentTime > 0;
+}
+
 export function computeOverlayFontPx(
   pct: number,
   kind: "zh" | "orig"
@@ -31,9 +42,9 @@ export function computeOverlayFontPx(
   const clamped = Math.max(0, Math.min(100, pct));
   if (clamped <= 0) return 0;
   if (kind === "zh") {
-    return Math.round(14 + (clamped / 100) * 18);
+    return Math.round(16 + (clamped / 100) * 54);
   }
-  return Math.round(12 + (clamped / 100) * 10);
+  return Math.round(14 + (clamped / 100) * 36);
 }
 
 export function computeListFontPx(pct: number, kind: "zh" | "orig"): number {

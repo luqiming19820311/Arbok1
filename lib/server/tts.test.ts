@@ -3,7 +3,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { computeOverlayFontPx, evaluateTtsSync } from "@/lib/arbok/tts-sync";
+import {
+  CLOUD_TTS_PRESETS,
+  LOCAL_TTS_MODEL_CATALOG,
+  SYSTEM_TTS_VOICES,
+} from "@/lib/arbok/providers";
+import {
+  canResumePausedTtsAudio,
+  computeOverlayFontPx,
+  evaluateTtsSync,
+} from "@/lib/arbok/tts-sync";
 import { closeDbForTests, saveAppSettings } from "./db";
 import { getKeychainStatus, resetMemoryKeychain, setSecret } from "./keychain";
 import { listLocalTtsModels, synthesizeSpeech } from "./tts";
@@ -134,7 +143,138 @@ test("TTS catch-up controller pauses video when English leads by >= 2 sentences 
     evaluateTtsSync({ videoSegIndex: 5, ttsSegIndex: 5, pausedByTts: true })
   ).toEqual({ action: "resume_video", lag: 0 });
 
-  expect(computeOverlayFontPx(100, "zh")).toBe(32);
-  expect(computeOverlayFontPx(100, "orig")).toBe(22);
+  expect(computeOverlayFontPx(65, "zh")).toBe(51);
+  expect(computeOverlayFontPx(65, "orig")).toBe(37);
+  expect(computeOverlayFontPx(100, "zh")).toBe(70);
+  expect(computeOverlayFontPx(100, "orig")).toBe(50);
   expect(computeOverlayFontPx(0, "zh")).toBe(0);
+
+  // Regression: ended HTMLAudioElement has paused===true and must never be replayed from start.
+  expect(
+    canResumePausedTtsAudio({
+      paused: true,
+      ended: true,
+      currentTime: 3.2,
+      duration: 3.2,
+    })
+  ).toBe(false);
+  expect(
+    canResumePausedTtsAudio({
+      paused: true,
+      ended: false,
+      currentTime: 1.1,
+      duration: 3.2,
+    })
+  ).toBe(true);
+});
+
+test("Cloud TTS removes xiaomi-mimo-cn, adds new providers, expands local models, and fixes Doubao/Qwen/DeepSeek", async () => {
+  expect(CLOUD_TTS_PRESETS.some((p) => (p.id as string) === "xiaomi-mimo-cn")).toBe(
+    false
+  );
+  expect(CLOUD_TTS_PRESETS.map((p) => p.id)).toEqual(
+    expect.arrayContaining([
+      "doubao-tts",
+      "qwen-tts",
+      "minimax-tts",
+      "siliconflow-tts",
+      "stepfun-tts",
+      "elevenlabs-tts",
+      "fish-audio-tts",
+    ])
+  );
+  expect(LOCAL_TTS_MODEL_CATALOG.map((m) => m.id)).toEqual(
+    expect.arrayContaining([
+      "kokoro-82m",
+      "cosyvoice2-0.5b",
+      "chattts-local",
+      "fish-speech-1.5",
+      "sherpa-onnx-vits-zh",
+    ])
+  );
+  expect(SYSTEM_TTS_VOICES.length).toBeGreaterThanOrEqual(14);
+
+  // Doubao V3 unidirectional reuses asr:doubao key and decodes NDJSON base64 audio chunks
+  setSecret("asr:doubao", "12345678:volc_token_secret");
+  let doubaoHeaders: Headers | null = null;
+  let doubaoUrl = "";
+  const doubaoRes = await synthesizeSpeech({
+    text: "豆包语音测试",
+    engine: "cloud",
+    provider: "doubao-tts",
+    model: "seed-tts-2.0",
+    voice: "zh_female_vv_uranus_bigtts",
+    fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+      doubaoUrl = String(input);
+      doubaoHeaders = new Headers(init?.headers);
+      const chunk1 = Buffer.from("ID3part1").toString("base64");
+      const chunk2 = Buffer.from("part2").toString("base64");
+      return new Response(
+        `${JSON.stringify({ code: 0, data: chunk1 })}\n${JSON.stringify({ code: 0, data: chunk2 })}\n${JSON.stringify({ code: 20000000, message: "OK" })}`,
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch,
+  });
+  expect(doubaoUrl).toBe(
+    "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+  );
+  expect(doubaoHeaders!.get("X-Api-App-Id")).toBe("12345678");
+  expect(doubaoHeaders!.get("X-Api-Access-Key")).toBe("volc_token_secret");
+  expect(doubaoRes.audioBuffer.toString("ascii")).toBe("ID3part1part2");
+
+  // Qwen-TTS upgrades legacy compatible-mode URL to DashScope multimodal-generation and fetches audio URL
+  setSecret("llm:qwen", "sk-qwen-dashscope-key");
+  const seenQwenUrls: string[] = [];
+  const qwenRes = await synthesizeSpeech({
+    text: "通义千问语音测试",
+    engine: "cloud",
+    provider: "qwen-tts",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen-tts",
+    voice: "Cherry",
+    fetchImpl: (async (input: string | URL | Request) => {
+      const u = String(input);
+      seenQwenUrls.push(u);
+      if (u.includes("multimodal-generation")) {
+        return new Response(
+          JSON.stringify({
+            output: { audio: { url: "https://oss.example.com/qwen.wav" } },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(Buffer.from("RIFFqwenwav"), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      });
+    }) as typeof fetch,
+  });
+  expect(seenQwenUrls[0]).toContain("multimodal-generation/generation");
+  expect(qwenRes.audioBuffer.toString("ascii")).toBe("RIFFqwenwav");
+
+  // DeepSeek official endpoint explains lack of native TTS clearly; compatible gateway succeeds
+  setSecret("tts:deepseek-tts", "sk-ds-tts-key");
+  await expect(
+    synthesizeSpeech({
+      text: "测试",
+      engine: "cloud",
+      provider: "deepseek-tts",
+      baseUrl: "https://api.deepseek.com/v1",
+    })
+  ).rejects.toThrow(/DeepSeek 官方接口暂未开放原生语音合成/);
+
+  const gatewayRes = await synthesizeSpeech({
+    text: "兼容网关测试",
+    engine: "cloud",
+    provider: "deepseek-tts",
+    baseUrl: "https://api.siliconflow.cn/v1/audio/speech",
+    fetchImpl: (async (input: string | URL | Request) => {
+      expect(String(input)).toBe("https://api.siliconflow.cn/v1/audio/speech");
+      return new Response(Buffer.from("MP3OK"), {
+        status: 200,
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    }) as typeof fetch,
+  });
+  expect(gatewayRes.audioBuffer.toString("ascii")).toBe("MP3OK");
 });

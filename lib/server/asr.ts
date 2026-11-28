@@ -90,6 +90,42 @@ export function parseSrtOrVtt(
   return segments;
 }
 
+const NON_SPEECH_HALLUCINATION_RE =
+  /^[\s♪♫♬♩🎵🎶()（）\[\]【】<>《》\-—·.。!！?？,，:：~～*]*(?:音乐|纯音乐|背景音乐|轻音乐|掌声|笑声|静音|空白|无声|music|bgm|applause|laughter|silence|blank_audio|inaudible|no\s+speech)?[\s♪♫♬♩🎵🎶()（）\[\]【】<>《》\-—·.。!！?？,，:：~～*]*$/i;
+
+export function filterHallucinatedAsrSegments(
+  segments: Array<{ start: number; end: number; orig: string }>
+): Array<{ start: number; end: number; orig: string }> {
+  const cleaned = segments
+    .map((s) => ({
+      ...s,
+      orig: s.orig.replace(/\s+/g, " ").trim(),
+    }))
+    .filter((s) => {
+      if (!s.orig) return false;
+      if (/^[♪♫♬♩🎵🎶\s]+$/.test(s.orig)) return false;
+      if (NON_SPEECH_HALLUCINATION_RE.test(s.orig)) return false;
+      return true;
+    });
+
+  const result: Array<{ start: number; end: number; orig: string }> = [];
+  let repeatCount = 0;
+  let lastNorm = "";
+
+  for (const seg of cleaned) {
+    const norm = seg.orig.toLowerCase().replace(/[\s.,!?，。！？、]/g, "");
+    if (norm && norm === lastNorm) {
+      repeatCount += 1;
+      if (repeatCount >= 3) continue;
+    } else {
+      lastNorm = norm;
+      repeatCount = 1;
+    }
+    result.push(seg);
+  }
+  return result;
+}
+
 export function parseWhisperJson(
   rawJson: string
 ): Array<{ start: number; end: number; orig: string }> {
@@ -102,23 +138,23 @@ export function parseWhisperJson(
   };
 
   if (Array.isArray(parsed.transcription)) {
-    return parsed.transcription
-      .map((item) => ({
+    return filterHallucinatedAsrSegments(
+      parsed.transcription.map((item) => ({
         start: Number(((item.offsets?.from ?? 0) / 1000).toFixed(2)),
         end: Number(((item.offsets?.to ?? 0) / 1000).toFixed(2)),
         orig: (item.text ?? "").trim(),
       }))
-      .filter((s) => s.orig.length > 0);
+    );
   }
 
   if (Array.isArray(parsed.segments)) {
-    return parsed.segments
-      .map((item) => ({
+    return filterHallucinatedAsrSegments(
+      parsed.segments.map((item) => ({
         start: Number((item.start ?? 0).toFixed(2)),
         end: Number((item.end ?? 0).toFixed(2)),
         orig: (item.text ?? "").trim(),
       }))
-      .filter((s) => s.orig.length > 0);
+    );
   }
 
   return [];
@@ -400,6 +436,26 @@ function inferAudioExtension(url: string, contentType: string | null): string {
   return "mp3";
 }
 
+function buildDirectAudioHeaders(audioUrl: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  };
+  if (/bilivideo\.com|hdslb\.com|akamaized\.net.*upgcxcode/i.test(audioUrl)) {
+    headers.Referer = "https://www.bilibili.com/";
+    headers.Origin = "https://www.bilibili.com";
+    const cookie = getSecret("auth:bilibili");
+    if (cookie) {
+      headers.Cookie = cookie.includes("SESSDATA=")
+        ? cookie
+        : `SESSDATA=${cookie}`;
+    }
+  } else if (/xiaoyuzhoufm\.com|xyzcdn\.net/i.test(audioUrl)) {
+    headers.Referer = "https://www.xiaoyuzhoufm.com/";
+  }
+  return headers;
+}
+
 export async function downloadDirectAudioFile(
   audioUrl: string,
   cacheDir: string,
@@ -407,12 +463,9 @@ export async function downloadDirectAudioFile(
   onStatus: (msg: string, progress: number) => void,
   fetchImpl: typeof fetch = proxyFetch
 ): Promise<string> {
-  onStatus("正在直连下载播客音频…", 6);
+  onStatus("正在直连下载音频…", 6);
   const res = await fetchImpl(audioUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    },
+    headers: buildDirectAudioHeaders(audioUrl),
     redirect: "follow",
     signal,
   });
@@ -481,13 +534,17 @@ async function ensureEpisodeAudioFile(
   localFilePath: string | undefined,
   signal: AbortSignal,
   onStatus: (msg: string, progress: number) => void,
-  fetchImpl: typeof fetch = proxyFetch
+  fetchImpl: typeof fetch = proxyFetch,
+  options?: { platform?: string; force?: boolean }
 ): Promise<string> {
   if (localFilePath && fs.existsSync(localFilePath) && fs.statSync(localFilePath).size > 1024) {
     return localFilePath;
   }
 
   const cacheDir = path.join(getAudioCacheDir(), episodeId);
+  if (options?.force && fs.existsSync(cacheDir)) {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
   fs.mkdirSync(cacheDir, { recursive: true });
   const existingAudio = fs
     .readdirSync(cacheDir)
@@ -502,14 +559,71 @@ async function ensureEpisodeAudioFile(
     return path.join(cacheDir, existingAudio);
   }
 
+  const tryDirectDownload = async (url: string): Promise<string | null> => {
+    try {
+      return await downloadDirectAudioFile(
+        url,
+        cacheDir,
+        signal,
+        onStatus,
+        fetchImpl
+      );
+    } catch (err) {
+      if (signal.aborted) throw err;
+      return null;
+    }
+  };
+
   if (audioUrl && /^https?:\/\//i.test(audioUrl)) {
-    return downloadDirectAudioFile(
-      audioUrl,
-      cacheDir,
-      signal,
-      onStatus,
-      fetchImpl
-    );
+    const direct = await tryDirectDownload(audioUrl);
+    if (direct) return direct;
+
+    // Refresh expired Bilibili/YouTube signed audio stream URLs before falling back to yt-dlp.
+    if (options?.platform === "bilibili" && pageUrl) {
+      try {
+        onStatus("音频直链已过期，正在刷新 B站音频流地址…", 8);
+        const { resolveBilibiliStream } = await import("./adapters/bilibili");
+        const fresh = await resolveBilibiliStream(pageUrl, {
+          fetchSubtitles: false,
+          fetchImpl,
+        });
+        if (fresh.audioUrl || fresh.videoUrl) {
+          const freshUrl = fresh.audioUrl ?? fresh.videoUrl!;
+          updateEpisodeFields(episodeId, {
+            audioUrl: fresh.audioUrl,
+            videoUrl: fresh.videoUrl,
+            streamExpiresAt: fresh.streamExpiresAt,
+          });
+          const retried = await tryDirectDownload(freshUrl);
+          if (retried) return retried;
+        }
+      } catch {
+        // Proceed to yt-dlp fallback below.
+      }
+    } else if (options?.platform === "youtube" && pageUrl) {
+      try {
+        onStatus("音频直链已过期，正在刷新 YouTube 音频流地址…", 8);
+        const { resolveYouTubeStreamAndSubtitles } = await import(
+          "./adapters/youtube"
+        );
+        const fresh = await resolveYouTubeStreamAndSubtitles(pageUrl, {
+          fetchSubtitles: false,
+          fetchImpl,
+        });
+        if (fresh.audioUrl || fresh.videoUrl) {
+          const freshUrl = fresh.audioUrl ?? fresh.videoUrl!;
+          updateEpisodeFields(episodeId, {
+            audioUrl: fresh.audioUrl,
+            videoUrl: fresh.videoUrl,
+            streamExpiresAt: fresh.streamExpiresAt,
+          });
+          const retried = await tryDirectDownload(freshUrl);
+          if (retried) return retried;
+        }
+      } catch {
+        // Proceed to yt-dlp fallback below.
+      }
+    }
   }
 
   const home = process.env.HOME ?? "";
@@ -526,6 +640,17 @@ async function ensureEpisodeAudioFile(
   onStatus("正在通过 yt-dlp 拉取单集音频…", 12);
   const outTemplate = path.join(cacheDir, "source.%(ext)s");
   const args = ["-x", "--audio-format", "mp3", "--no-playlist", "-o", outTemplate];
+
+  if (options?.platform === "bilibili" || /bilibili\.com|b23\.tv/i.test(pageUrl)) {
+    args.push("--add-header", "Referer:https://www.bilibili.com/");
+    const biliCookie = getSecret("auth:bilibili");
+    if (biliCookie) {
+      const cookieVal = biliCookie.includes("SESSDATA=")
+        ? biliCookie
+        : `SESSDATA=${biliCookie}`;
+      args.push("--add-header", `Cookie:${cookieVal}`);
+    }
+  }
 
   const settings = getAppSettings();
   if (settings.proxyMode === "custom" && settings.proxyUrl) {
@@ -926,6 +1051,7 @@ export async function runLocalWhisperJob(
         chunks[idx],
         "-l",
         options?.language || "auto",
+        "-sns",
         "-oj",
         "-of",
         chunkOutPrefix,
@@ -1131,7 +1257,9 @@ export function startAsrJob(
             message: msg,
             updatedAt: Date.now(),
           });
-        }
+        },
+        proxyFetch,
+        { platform: ep.platform, force }
       );
 
       if (engine === "local") {

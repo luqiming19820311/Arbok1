@@ -130,7 +130,8 @@ function resolveLocalCliBinary(provider: LlmProviderId): string | null {
 async function runLocalCliLlm(
   cfg: LlmRuntimeConfig,
   messages: LlmChatMessage[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs = 120_000
 ): Promise<string> {
   const preset = getLlmPreset(cfg.provider);
   const bin = resolveLocalCliBinary(cfg.provider);
@@ -181,7 +182,7 @@ async function runLocalCliLlm(
       {
         cwd: sandboxDir,
         encoding: "utf8",
-        timeout: 120_000,
+        timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
         signal,
       },
@@ -199,141 +200,195 @@ async function runLocalCliLlm(
   });
 }
 
+function createTimedAbortSignal(
+  parentSignal?: AbortSignal,
+  timeoutMs?: number
+): { signal: AbortSignal; didTimeout: () => boolean; cleanup: () => void } {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const onParentAbort = () => {
+    controller.abort(parentSignal?.reason);
+  };
+
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal.addEventListener("abort", onParentAbort, { once: true });
+    }
+  }
+
+  const timer =
+    typeof timeoutMs === "number" && timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort(new Error(`LLM request timed out after ${timeoutMs}ms`));
+        }, timeoutMs)
+      : null;
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      parentSignal?.removeEventListener("abort", onParentAbort);
+    },
+  };
+}
+
 export async function completeLlm(
   cfg: LlmRuntimeConfig,
   messages: LlmChatMessage[],
   options?: {
     temperature?: number;
     jsonMode?: boolean;
+    timeoutMs?: number;
     fetchImpl?: typeof fetch;
     signal?: AbortSignal;
   }
 ): Promise<string> {
   assertKeyPresent(cfg);
+  const timeoutMs = options?.timeoutMs ?? 90_000;
   if (cfg.protocol === "cli" && !/^https?:\/\//i.test(cfg.baseUrl)) {
-    return runLocalCliLlm(cfg, messages, options?.signal);
+    return runLocalCliLlm(cfg, messages, options?.signal, timeoutMs);
   }
   const doFetch = options?.fetchImpl ?? proxyFetch;
+  const timed = createTimedAbortSignal(options?.signal, timeoutMs);
 
-  if (cfg.protocol === "gemini") {
-    const systemMsg = messages.find((m) => m.role === "system")?.content;
-    const contents = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
-    const url = `${cfg.baseUrl}/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey ?? "")}`;
-    const res = await doFetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: options?.signal,
-      body: JSON.stringify({
-        ...(systemMsg
-          ? { systemInstruction: { parts: [{ text: systemMsg }] } }
-          : {}),
-        contents,
-        generationConfig: {
-          temperature: options?.temperature ?? 0.3,
-          ...(options?.jsonMode
-            ? { responseMimeType: "application/json" }
+  const fetchWithTimeout = async (
+    url: string,
+    init: RequestInit
+  ): Promise<Response> => {
+    try {
+      return await doFetch(url, { ...init, signal: timed.signal });
+    } catch (err) {
+      if (timed.didTimeout() && !options?.signal?.aborted) {
+        throw new Error(`${cfg.provider} 请求超时（>${Math.round(timeoutMs / 1000)}s），正在重试`);
+      }
+      throw err;
+    }
+  };
+
+  try {
+    if (cfg.protocol === "gemini") {
+      const systemMsg = messages.find((m) => m.role === "system")?.content;
+      const contents = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        }));
+      const url = `${cfg.baseUrl}/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey ?? "")}`;
+      const res = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(systemMsg
+            ? { systemInstruction: { parts: [{ text: systemMsg }] } }
             : {}),
+          contents,
+          generationConfig: {
+            temperature: options?.temperature ?? 0.3,
+            ...(options?.jsonMode
+              ? { responseMimeType: "application/json" }
+              : {}),
+          },
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Gemini 请求失败 (${res.status}): ${(await res.text()).slice(0, 220)}`);
+      }
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      };
+      return (
+        data.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text ?? "")
+          .join("") ?? ""
+      );
+    }
+
+    if (cfg.protocol === "claude") {
+      const systemMsg = messages.find((m) => m.role === "system")?.content;
+      const chatMsgs = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role, content: m.content }));
+      const res = await fetchWithTimeout(`${cfg.baseUrl}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": cfg.apiKey ?? "",
+          "anthropic-version": "2023-06-01",
         },
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Gemini 请求失败 (${res.status}): ${(await res.text()).slice(0, 220)}`);
+        body: JSON.stringify({
+          model: cfg.model,
+          max_tokens: 4096,
+          temperature: options?.temperature ?? 0.3,
+          ...(systemMsg ? { system: systemMsg } : {}),
+          messages: chatMsgs,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Claude 请求失败 (${res.status}): ${(await res.text()).slice(0, 220)}`);
+      }
+      const data = (await res.json()) as {
+        content?: Array<{ type: string; text?: string }>;
+      };
+      return (
+        data.content
+          ?.filter((block) => block.type === "text")
+          .map((block) => block.text ?? "")
+          .join("") ?? ""
+      );
     }
-    const data = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    return (
-      data.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text ?? "")
-        .join("") ?? ""
-    );
-  }
 
-  if (cfg.protocol === "claude") {
-    const systemMsg = messages.find((m) => m.role === "system")?.content;
-    const chatMsgs = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role, content: m.content }));
-    const res = await doFetch(`${cfg.baseUrl}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": cfg.apiKey ?? "",
-        "anthropic-version": "2023-06-01",
-      },
-      signal: options?.signal,
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: 4096,
-        temperature: options?.temperature ?? 0.3,
-        ...(systemMsg ? { system: systemMsg } : {}),
-        messages: chatMsgs,
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Claude 请求失败 (${res.status}): ${(await res.text()).slice(0, 220)}`);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (cfg.apiKey) {
+      headers.Authorization = `Bearer ${cfg.apiKey}`;
     }
-    const data = (await res.json()) as {
-      content?: Array<{ type: string; text?: string }>;
+    const bodyPayload: Record<string, unknown> = {
+      model: cfg.model,
+      temperature: options?.temperature ?? 0.3,
+      messages,
     };
-    return (
-      data.content
-        ?.filter((block) => block.type === "text")
-        .map((block) => block.text ?? "")
-        .join("") ?? ""
-    );
-  }
+    if (options?.jsonMode) {
+      bodyPayload.response_format = { type: "json_object" };
+    }
+    if (cfg.provider === "zhipu" && options?.jsonMode) {
+      bodyPayload.thinking = { type: "disabled" };
+    }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (cfg.apiKey) {
-    headers.Authorization = `Bearer ${cfg.apiKey}`;
-  }
-  const bodyPayload: Record<string, unknown> = {
-    model: cfg.model,
-    temperature: options?.temperature ?? 0.3,
-    messages,
-  };
-  if (options?.jsonMode) {
-    bodyPayload.response_format = { type: "json_object" };
-  }
-  if (cfg.provider === "zhipu" && options?.jsonMode) {
-    bodyPayload.thinking = { type: "disabled" };
-  }
-
-  let res = await doFetch(`${cfg.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers,
-    signal: options?.signal,
-    body: JSON.stringify(bodyPayload),
-  });
-  if (!res.ok && res.status === 400 && (bodyPayload.response_format || bodyPayload.thinking)) {
-    delete bodyPayload.response_format;
-    delete bodyPayload.thinking;
-    res = await doFetch(`${cfg.baseUrl}/chat/completions`, {
+    let res = await fetchWithTimeout(`${cfg.baseUrl}/chat/completions`, {
       method: "POST",
       headers,
-      signal: options?.signal,
       body: JSON.stringify(bodyPayload),
     });
+    if (!res.ok && res.status === 400 && (bodyPayload.response_format || bodyPayload.thinking)) {
+      delete bodyPayload.response_format;
+      delete bodyPayload.thinking;
+      res = await fetchWithTimeout(`${cfg.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(bodyPayload),
+      });
+    }
+    if (!res.ok) {
+      throw new Error(`${cfg.provider} 请求失败 (${res.status}): ${(await res.text()).slice(0, 220)}`);
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+    };
+    return (
+      data.choices?.[0]?.message?.content?.trim() ||
+      data.choices?.[0]?.message?.reasoning_content?.trim() ||
+      ""
+    );
+  } finally {
+    timed.cleanup();
   }
-  if (!res.ok) {
-    throw new Error(`${cfg.provider} 请求失败 (${res.status}): ${(await res.text()).slice(0, 220)}`);
-  }
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-  };
-  return (
-    data.choices?.[0]?.message?.content?.trim() ||
-    data.choices?.[0]?.message?.reasoning_content?.trim() ||
-    ""
-  );
 }
 
 export async function streamLlm(
@@ -531,11 +586,31 @@ function isUntranslatedEcho(
   return false;
 }
 
+function extractLooseTranslationObjects(
+  raw: string
+): Array<Record<string, unknown>> {
+  const results: Array<Record<string, unknown>> = [];
+  const pairRe =
+    /"id"\s*:\s*"?(\d+)"?\s*,\s*"(?:zh|translation|translated|text|target)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = pairRe.exec(raw)) !== null) {
+    try {
+      const zh = JSON.parse(`"${match[2]}"`) as string;
+      results.push({ id: Number(match[1]), zh });
+    } catch {
+      results.push({ id: Number(match[1]), zh: match[2] });
+    }
+  }
+  return results;
+}
+
 function parseTranslationItems(
   raw: string,
+  targets: Array<{ id: number; text: string }>,
   targetIdSet: Set<number>,
   origById: Map<number, string>,
-  targetIsChinese: boolean
+  targetIsChinese: boolean,
+  allowEchoFallback = false
 ): Array<{ id: number; zh: string }> {
   const cleaned = raw
     .trim()
@@ -543,33 +618,60 @@ function parseTranslationItems(
     .replace(/\s*```$/i, "");
 
   let rawList: Array<Record<string, unknown>> = [];
-  if (cleaned.startsWith("[")) {
-    const arr = JSON.parse(cleaned) as unknown;
-    if (Array.isArray(arr)) {
-      rawList = arr as Array<Record<string, unknown>>;
+  try {
+    if (cleaned.startsWith("[")) {
+      const arr = JSON.parse(cleaned) as unknown;
+      if (Array.isArray(arr)) {
+        rawList = arr as Array<Record<string, unknown>>;
+      }
+    } else {
+      const obj = extractJsonObject<{
+        translations?: Array<Record<string, unknown>>;
+        items?: Array<Record<string, unknown>>;
+        results?: Array<Record<string, unknown>>;
+      }>(cleaned);
+      rawList = obj.translations ?? obj.items ?? obj.results ?? [];
     }
-  } else {
-    const obj = extractJsonObject<{
-      translations?: Array<Record<string, unknown>>;
-      items?: Array<Record<string, unknown>>;
-      results?: Array<Record<string, unknown>>;
-    }>(cleaned);
-    rawList = obj.translations ?? obj.items ?? obj.results ?? [];
+  } catch {
+    rawList = extractLooseTranslationObjects(cleaned);
   }
 
   const dedup = new Map<number, string>();
+  const unmatchedTexts: string[] = [];
+
   for (const item of rawList) {
     if (!item || typeof item !== "object") continue;
-    const id = Number(item.id);
-    if (!Number.isFinite(id) || !targetIdSet.has(id)) continue;
     const rawText =
       item.zh ?? item.translation ?? item.translated ?? item.text ?? item.target;
     if (typeof rawText !== "string") continue;
     const zh = rawText.trim();
     if (!zh) continue;
-    const orig = origById.get(id) ?? "";
-    if (isUntranslatedEcho(orig, zh, targetIsChinese)) continue;
-    dedup.set(id, zh);
+
+    const id = Number(item.id);
+    if (Number.isFinite(id) && targetIdSet.has(id)) {
+      const orig = origById.get(id) ?? "";
+      if (!allowEchoFallback && isUntranslatedEcho(orig, zh, targetIsChinese)) {
+        continue;
+      }
+      dedup.set(id, zh);
+    } else {
+      unmatchedTexts.push(zh);
+    }
+  }
+
+  // Fallback when LLM returned exact 1-to-1 items in order but renumbered IDs (e.g. 1..N instead of DB IDs).
+  if (
+    dedup.size === 0 &&
+    rawList.length === targets.length &&
+    unmatchedTexts.length === targets.length
+  ) {
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      const zh = unmatchedTexts[i];
+      if (allowEchoFallback || !isUntranslatedEcho(target.text, zh, targetIsChinese)) {
+        dedup.set(target.id, zh);
+      }
+    }
   }
 
   return [...dedup.entries()].map(([id, zh]) => ({ id, zh }));
@@ -583,6 +685,7 @@ export async function translateEpisodeTranscript(
     batchSize?: number;
     contextWindow?: number;
     concurrency?: number;
+    timeoutMs?: number;
     fetchImpl?: typeof fetch;
     onBatch?: (event: TranslationBatchEvent) => void;
     signal?: AbortSignal;
@@ -591,6 +694,7 @@ export async function translateEpisodeTranscript(
   total: number;
   translatedNow: number;
   cachedCount: number;
+  missingCount: number;
   segments: TranscriptSegment[];
 }> {
   const ep = getEpisodeById(episodeId);
@@ -606,10 +710,12 @@ export async function translateEpisodeTranscript(
 
   const all = ep.transcript;
   if (pairPreset.id === "off") {
+    const cached = all.filter((s) => Boolean(s.zh?.trim())).length;
     return {
       total: all.length,
       translatedNow: 0,
-      cachedCount: all.filter((s) => Boolean(s.zh?.trim())).length,
+      cachedCount: cached,
+      missingCount: all.length - cached,
       segments: all,
     };
   }
@@ -638,6 +744,7 @@ export async function translateEpisodeTranscript(
       total: all.length,
       translatedNow: 0,
       cachedCount,
+      missingCount: 0,
       segments: all,
     };
   }
@@ -656,23 +763,19 @@ export async function translateEpisodeTranscript(
 
   const batchSize = options?.batchSize ?? 12;
   const contextWindow = options?.contextWindow ?? 2;
-  const concurrency = Math.max(1, Math.min(3, options?.concurrency ?? 2));
-
-  const batches: number[][] = [];
-  for (let i = 0; i < pendingIndices.length; i += batchSize) {
-    batches.push(pendingIndices.slice(i, i + batchSize));
-  }
+  const concurrency = Math.max(1, Math.min(4, options?.concurrency ?? 3));
+  const batchTimeoutMs = options?.timeoutMs ?? 30_000;
 
   let translatedNow = 0;
-  let cursor = 0;
   let lastBatchError: Error | null = null;
 
-  async function translateSubset(
+  async function translateChunk(
     indices: number[],
-    backfillAttempt = 0
+    backfillAttempt: number,
+    maxAttempts: number,
+    allowEchoFallback: boolean
   ): Promise<void> {
-    if (indices.length === 0) return;
-    if (options?.signal?.aborted) return;
+    if (indices.length === 0 || options?.signal?.aborted) return;
 
     const firstIdx = indices[0];
     const lastIdx = indices[indices.length - 1];
@@ -700,7 +803,7 @@ export async function translateEpisodeTranscript(
     ].join("\n\n");
 
     let valid: Array<{ id: number; zh: string }> = [];
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (options?.signal?.aborted) return;
       try {
         const raw = await completeLlm(
@@ -716,22 +819,33 @@ export async function translateEpisodeTranscript(
           {
             temperature: 0.2,
             jsonMode: true,
+            timeoutMs: batchTimeoutMs,
             fetchImpl: options?.fetchImpl,
             signal: options?.signal,
           }
         );
         valid = parseTranslationItems(
           raw,
+          targets,
           targetIdSet,
           origById,
-          pairPreset.targetIsChinese
+          pairPreset.targetIsChinese,
+          allowEchoFallback
         );
         if (valid.length > 0) break;
+        if (attempt < maxAttempts - 1 && !options?.signal?.aborted) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
       } catch (err) {
         lastBatchError =
           err instanceof Error ? err : new Error("批次翻译请求失败");
-        if (attempt < 2 && !options?.signal?.aborted) {
-          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+        if (attempt < maxAttempts - 1 && !options?.signal?.aborted) {
+          const isRateLimit =
+            /429|rate|limit|too many/i.test(lastBatchError.message);
+          const delayMs = isRateLimit
+            ? 1200 * (attempt + 1)
+            : 450 * (attempt + 1);
+          await new Promise((r) => setTimeout(r, delayMs));
         }
       }
     }
@@ -751,43 +865,85 @@ export async function translateEpisodeTranscript(
         fromCache: false,
       });
     }
+  }
 
-    const missingIndices = indices.filter(
+  async function runChunkPass(
+    indices: number[],
+    chunkSize: number,
+    workerLimit: number,
+    backfillAttempt: number,
+    maxAttempts: number,
+    allowEchoFallback: boolean
+  ): Promise<void> {
+    if (indices.length === 0 || options?.signal?.aborted) return;
+    const chunks: number[][] = [];
+    for (let i = 0; i < indices.length; i += chunkSize) {
+      chunks.push(indices.slice(i, i + chunkSize));
+    }
+    let cursor = 0;
+    const workerCount = Math.max(1, Math.min(workerLimit, chunks.length));
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (cursor < chunks.length) {
+          if (options?.signal?.aborted) break;
+          const idx = cursor++;
+          await translateChunk(
+            chunks[idx],
+            backfillAttempt,
+            maxAttempts,
+            allowEchoFallback
+          );
+        }
+      })
+    );
+  }
+
+  // Pass 1: translate all main batches concurrently without blocking workers on nested retries.
+  await runChunkPass(pendingIndices, batchSize, concurrency, 0, 3, false);
+
+  // Pass 2: concurrently backfill any lines skipped or echoed in pass 1.
+  if (!options?.signal?.aborted) {
+    const missingPass2 = pendingIndices.filter(
       (idx) => !translatedIdsSet.has(all[idx].id)
     );
-    if (missingIndices.length > 0 && backfillAttempt < 2 && !options?.signal?.aborted) {
-      const subChunkSize = backfillAttempt === 0 ? 5 : 2;
-      for (let m = 0; m < missingIndices.length; m += subChunkSize) {
-        await translateSubset(
-          missingIndices.slice(m, m + subChunkSize),
-          backfillAttempt + 1
-        );
-      }
-    }
+    await runChunkPass(
+      missingPass2,
+      Math.min(6, batchSize),
+      concurrency,
+      1,
+      2,
+      false
+    );
   }
 
-  async function worker(): Promise<void> {
-    while (cursor < batches.length) {
-      if (options?.signal?.aborted) break;
-      const currentIdx = cursor++;
-      await translateSubset(batches[currentIdx], 0);
-    }
+  // Pass 3: final small-chunk pass; allow proper nouns / verbatim terms that LLM intentionally keeps.
+  if (!options?.signal?.aborted) {
+    const missingPass3 = pendingIndices.filter(
+      (idx) => !translatedIdsSet.has(all[idx].id)
+    );
+    await runChunkPass(
+      missingPass3,
+      Math.min(3, batchSize),
+      Math.min(2, concurrency),
+      2,
+      2,
+      true
+    );
   }
-
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, batches.length) }, () => worker())
-  );
 
   if (translatedNow === 0 && lastBatchError) {
     throw lastBatchError;
   }
 
   const updated = getEpisodeById(episodeId);
+  const finalSegments = updated?.transcript ?? all;
+  const missingCount = finalSegments.filter((s) => !s.zh?.trim()).length;
   return {
     total: all.length,
     translatedNow,
     cachedCount,
-    segments: updated?.transcript ?? all,
+    missingCount,
+    segments: finalSegments,
   };
 }
 
@@ -1047,6 +1203,8 @@ export async function streamEpisodeChat(
   question: string,
   onDelta: (delta: string) => void,
   options?: {
+    provider?: LlmProviderId;
+    model?: string;
     fetchImpl?: typeof fetch;
     signal?: AbortSignal;
   }
@@ -1057,7 +1215,19 @@ export async function streamEpisodeChat(
     throw new Error("该单集尚无字幕，请先获取或转写字幕后再向 AI 提问");
   }
 
-  const cfg = resolveLlmConfig();
+  const settings = getAppSettings();
+  const effectiveProvider =
+    options?.provider ??
+    (settings.llmGuideProvider && settings.llmGuideProvider !== "default"
+      ? settings.llmGuideProvider
+      : settings.llmProvider);
+  const cfg = resolveLlmConfig(
+    {
+      provider: effectiveProvider,
+      ...(options?.model ? { model: options.model } : {}),
+    },
+    settings
+  );
   assertKeyPresent(cfg);
 
   const contextText = selectTranscriptContextForQuestion(ep, question);
@@ -1067,6 +1237,7 @@ export async function streamEpisodeChat(
     "1. 回答必须使用简体中文，清晰、简洁、有条理。",
     "2. 凡引用文稿观点、数据或原话处，必须在正文中用 [MM:SS] 格式标注对应时间戳（例如 [01:45]），方便用户点击跳转原声核对。",
     "3. 若文稿未提及，请明确说明「本期文稿中未提及此细节」。",
+    "4. 排版要求：先用 1-2 句给出核心结论，随后分点阐述时必须「每一点单独换一行」（使用 1. / 2. / 3. 有序列表或 - 无序列表，每条之间单独换行），重点词可用 **加粗** 突出，严禁将多个编号要点挤在同一段落里。",
     "",
     `单集：${ep.title}（${ep.channel}）`,
     "字幕文稿：",

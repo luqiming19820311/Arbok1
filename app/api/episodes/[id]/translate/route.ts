@@ -18,11 +18,21 @@ export async function POST(
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (payload: unknown) => {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
-        );
+      let closed = false;
+      const sendRaw = (chunk: string) => {
+        if (closed || request.signal.aborted) return;
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          closed = true;
+        }
       };
+      const send = (payload: unknown) => {
+        sendRaw(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+      const heartbeat = setInterval(() => {
+        sendRaw(": keepalive\n\n");
+      }, 8000);
 
       try {
         const result = await translateEpisodeTranscript(id, {
@@ -38,6 +48,7 @@ export async function POST(
           total: result.total,
           translatedNow: result.translatedNow,
           cachedCount: result.cachedCount,
+          missingCount: result.missingCount,
           segments: result.segments,
         });
       } catch (err) {
@@ -47,7 +58,15 @@ export async function POST(
           message: err instanceof Error ? err.message : "双语翻译失败",
         });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // Stream already closed by client disconnect.
+          }
+        }
       }
     },
   });

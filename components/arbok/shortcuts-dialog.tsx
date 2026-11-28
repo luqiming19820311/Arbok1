@@ -35,6 +35,7 @@ const SHORTCUT_GROUPS: Array<{
     items: [
       { keys: ["C"], label: "循环切换字幕模式（双语 → 纯中文 → 纯原文）" },
       { keys: ["A"], label: "YouTube / B站 / 本地视频切换「视频 / 纯音频」" },
+      { keys: ["P"], label: "开启 / 退出视频画中画（支持中英字幕浮窗）" },
       { keys: ["⌘", "F"], label: "聚焦当前文稿内搜索框" },
     ],
   },

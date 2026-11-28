@@ -1,8 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createAgent } from "@ui-sdk/react/agent";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { ArbokApp } from "./arbok-app";
+import { disableYouTubeCaptions, type YtPlayerInstance } from "./youtube-hd-player";
 
 let approveConfirm = false;
 const agent = createAgent({
@@ -101,6 +102,14 @@ test("an agent can inspect every control across home, player, and Phase 2 AI/ASR
   });
   expect(playerActions.ok, playerActions.error?.message).toBe(true);
   expect(screen.getByText("一句话总结")).toBeTruthy();
+
+  const chatActions = await agent.act({
+    steps: [
+      { ref: "单集阅读工作台", action: "select", args: ["AI 问答"] },
+      { ref: "AI 问答模型", action: "setValue", args: ["DeepSeek · deepseek-chat"] },
+    ],
+  });
+  expect(chatActions.ok, chatActions.error?.message).toBe(true);
 
   const settingsResult = await agent.act({
     steps: [
@@ -248,7 +257,7 @@ test("manage subscriptions dialog supports custom folders, moving channels, and 
   expect(screen.getByRole("button", { name: "收起分类 科技类" })).toBeTruthy();
 });
 
-test("supports Follow System theme mode and About tab with V0.1.0 OTA panel", async () => {
+test("supports Follow System theme mode and About tab with V0.2.0 OTA panel", async () => {
   const user = userEvent.setup();
   render(<ArbokApp />);
 
@@ -260,7 +269,7 @@ test("supports Follow System theme mode and About tab with V0.1.0 OTA panel", as
   expect(followSystemBtn.getAttribute("aria-checked")).toBe("true");
 
   await user.click(screen.getByRole("tab", { name: "关于" }));
-  expect(screen.getByText(/版本 V0\.1\.0/)).toBeTruthy();
+  expect(screen.getByText(/版本 V0\.2\.0/)).toBeTruthy();
   expect(
     screen.getByText(
       /支持 YouTube、哔哩哔哩、播客，配中文字幕、翻译和播报、AI 导读、AI 问答、笔记等功能。/
@@ -270,4 +279,93 @@ test("supports Follow System theme mode and About tab with V0.1.0 OTA panel", as
   expect(screen.getByRole("button", { name: /检查更新/ })).toBeTruthy();
   const qrImg = screen.getByAltText("微信扫码赞赏与联系作者");
   expect(qrImg.getAttribute("src")).toBe("/wechat-qr.png");
+});
+
+test("hides built-in YouTube captions via unloadModule and track reset", () => {
+  const unloadModule = vi.fn();
+  const setOption = vi.fn();
+  const mockPlayer = {
+    playVideo: vi.fn(),
+    pauseVideo: vi.fn(),
+    seekTo: vi.fn(),
+    setPlaybackRate: vi.fn(),
+    setVolume: vi.fn(),
+    getCurrentTime: vi.fn(() => 0),
+    getDuration: vi.fn(() => 100),
+    getPlaybackQuality: vi.fn(() => "hd1080"),
+    unloadModule,
+    setOption,
+    destroy: vi.fn(),
+  } satisfies YtPlayerInstance;
+
+  disableYouTubeCaptions(mockPlayer);
+  expect(setOption).toHaveBeenCalledWith("captions", "track", {});
+  expect(setOption).toHaveBeenCalledWith("cc", "track", {});
+  expect(unloadModule).toHaveBeenCalledWith("captions");
+  expect(unloadModule).toHaveBeenCalledWith("cc");
+});
+
+test("supports episode favorites (star, play all, unfavorite), collapsible subtitle panel, position memory, and Picture-in-Picture", async () => {
+  const user = userEvent.setup();
+  render(<ArbokApp />);
+
+  // Home header integrates 收藏 seamlessly inside the platform segmented control
+  const favTab = screen.getByRole("radio", { name: /收藏/ });
+  expect(favTab).toBeTruthy();
+
+  // Open current video episode (initial positionSec = 264 -> 04:24)
+  await user.click(screen.getByRole("button", { name: "继续播放" }));
+  expect(screen.getByText("04:24")).toBeTruthy();
+
+  // Collapse and expand right subtitle panel via the button next to 导出 MD
+  const collapseRightBtn = screen.getByRole("button", { name: "收起右侧字幕栏" });
+  expect(collapseRightBtn).toBeTruthy();
+  await user.click(collapseRightBtn);
+  const expandRightBtn = await screen.findByRole("button", {
+    name: "展开右侧字幕栏",
+  });
+  await user.click(expandRightBtn);
+  expect(screen.getByRole("button", { name: "收起右侧字幕栏" })).toBeTruthy();
+
+  const starToggle = screen.getByRole("button", { name: "收藏单集" });
+  expect(starToggle).toBeTruthy();
+  await user.click(starToggle);
+  expect(screen.getByRole("button", { name: "取消收藏" })).toBeTruthy();
+
+  // Toggle Picture-in-Picture and confirm live subtitle overlay stays rendered
+  await user.click(screen.getByRole("button", { name: "画中画播放" }));
+  expect(screen.getByTestId("pip-stage")).toBeTruthy();
+  expect(screen.getByTestId("video-subtitle-overlay")).toBeTruthy();
+
+  // Exit PiP via exit button
+  const exitButtons = screen.getAllByRole("button", { name: "退出画中画" });
+  await user.click(exitButtons[0]);
+  expect(screen.queryByTestId("pip-stage")).toBeNull();
+  expect(screen.getByTestId("video-stage")).toBeTruthy();
+
+  // Return to home: MiniPlayer must retain the remembered position (04:24), never reset to 00:00
+  await user.click(screen.getByRole("button", { name: "返回列表" }));
+  expect(screen.getByText("04:24")).toBeTruthy();
+
+  await user.click(screen.getByRole("radio", { name: /收藏/ }));
+
+  expect(screen.getByRole("button", { name: /全部播放（1 集）/ })).toBeTruthy();
+  expect(
+    screen.getAllByRole("button", {
+      name: /深度拆解 2026 本地优先 AI 智能体与上下文工程/,
+    }).length
+  ).toBeGreaterThanOrEqual(2);
+
+  // Play all from favorites opens player and remembers position
+  await user.click(screen.getByRole("button", { name: /全部播放（1 集）/ }));
+  expect(screen.getByRole("tab", { name: "字幕" })).toBeTruthy();
+  expect(screen.getByText("04:24")).toBeTruthy();
+
+  // Back to favorites and unfavorite directly from the list
+  await user.click(screen.getByRole("button", { name: "返回列表" }));
+  const unstarBtn = screen.getByRole("button", {
+    name: /取消收藏 深度拆解 2026 本地优先 AI 智能体与上下文工程/,
+  });
+  await user.click(unstarBtn);
+  expect(screen.getByText("还没有收藏的单集")).toBeTruthy();
 });

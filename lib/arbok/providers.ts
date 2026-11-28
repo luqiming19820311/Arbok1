@@ -591,21 +591,36 @@ export function getTranslationPairPreset(
 }
 
 export const SYSTEM_TTS_VOICES: Array<{ value: string; label: string }> = [
-  { value: "Tingting", label: "婷婷（女声）" },
-  { value: "Meijia", label: "美嘉（台湾女声）" },
-  { value: "Flo (中文（中国大陆）)", label: "清禾（女声）" },
-  { value: "Sandy (中文（中国大陆）)", label: "晴岚（女声）" },
-  { value: "Grandma (中文（中国大陆）)", label: "温润（女声）" },
-  { value: "Eddy (中文（中国大陆）)", label: "言川（男声）" },
-  { value: "Reed (中文（中国大陆）)", label: "远山（男声）" },
-  { value: "Rocko (中文（中国大陆）)", label: "明朗（男声）" },
+  { value: "Tingting", label: "婷婷（普通话女声）" },
+  { value: "Meijia", label: "美佳（台湾女声）" },
+  { value: "Sinji", label: "善怡（粤语女声）" },
+  { value: "Flo (中文（中国大陆）)", label: "清禾（柔和女声）" },
+  { value: "Sandy (中文（中国大陆）)", label: "晴岚（清亮女声）" },
+  { value: "Shelley (中文（中国大陆）)", label: "疏影（知性女声）" },
+  { value: "Grandma (中文（中国大陆）)", label: "温润（叙事女声）" },
+  { value: "Eddy (中文（中国大陆）)", label: "言川（沉稳男声）" },
+  { value: "Reed (中文（中国大陆）)", label: "远山（醇厚男声）" },
+  { value: "Rocko (中文（中国大陆）)", label: "明朗（青年男声）" },
+  { value: "Grandpa (中文（中国大陆）)", label: "松柏（浑厚男声）" },
+  { value: "Shelley (中文（台湾）)", label: "知行（台湾女声）" },
+  { value: "Eddy (中文（台湾）)", label: "志明（台湾男声）" },
+  { value: "Samantha", label: "Samantha（美式英语）" },
+  { value: "Daniel", label: "Daniel（英式英语）" },
+  { value: "Kyoko", label: "Kyoko（日语女声）" },
 ];
 
 export interface CloudTtsPreset {
   id: CloudTtsProviderId;
   label: string;
   pillLabel: string;
-  protocol: "xiaomi-mimo" | "openai-speech";
+  protocol:
+    | "xiaomi-mimo"
+    | "openai-speech"
+    | "doubao"
+    | "qwen-dashscope"
+    | "minimax"
+    | "elevenlabs"
+    | "fish-audio";
   baseUrl: string;
   defaultModel: string;
   models: string[];
@@ -618,9 +633,9 @@ export interface CloudTtsPreset {
 export const CLOUD_TTS_PRESETS: CloudTtsPreset[] = [
   {
     id: "doubao-tts",
-    label: "豆包语音 TTS",
+    label: "豆包语音 TTS (火山引擎 V3)",
     pillLabel: "豆包语音",
-    protocol: "openai-speech",
+    protocol: "doubao",
     baseUrl: "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
     defaultModel: "seed-tts-2.0",
     models: ["seed-tts-2.0", "seed-tts-1.1"],
@@ -637,30 +652,155 @@ export const CLOUD_TTS_PRESETS: CloudTtsPreset[] = [
       { value: "en_male_tim_uranus_bigtts", label: "Tim" },
       { value: "en_female_dacey_uranus_bigtts", label: "Dacey" },
     ],
-    description: "中文自然度高，支持多情感音色和原声重塑。朗读时文字会发送到豆包语音。",
+    description:
+      "字节火山引擎豆包大模型语音（V3 单向流接口）。API Key 支持直接填火山 API Key 或「AppID:AccessToken」格式；填过豆包 ASR 可留空复用。",
     requiresKey: true,
     applyUrl: "https://console.volcengine.com/speech/app",
   },
   {
-    id: "deepseek-tts",
-    label: "DeepSeek 兼容语音",
-    pillLabel: "DeepSeek",
+    id: "qwen-tts",
+    label: "通义千问 Qwen-TTS (DashScope)",
+    pillLabel: "通义 Qwen-TTS",
+    protocol: "qwen-dashscope",
+    baseUrl:
+      "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    defaultModel: "qwen-tts",
+    models: ["qwen-tts", "qwen-tts-latest", "qwen3-tts-flash"],
+    voices: [
+      { value: "Cherry", label: "Cherry（女声）" },
+      { value: "Serena", label: "Serena（温润女声）" },
+      { value: "Ethan", label: "Ethan（男声）" },
+      { value: "Chelsie", label: "Chelsie（双语）" },
+      { value: "Dylan", label: "Dylan（北京男声）" },
+      { value: "Jada", label: "Jada（上海女声）" },
+      { value: "Sunny", label: "Sunny（四川女声）" },
+    ],
+    description:
+      "阿里云百炼通义 Qwen-TTS 原生多模态合成接口；若已在「AI 翻译」配置过通义千问 Key 可留空复用。",
+    requiresKey: true,
+    applyUrl: "https://bailian.console.aliyun.com/",
+  },
+  {
+    id: "minimax-tts",
+    label: "MiniMax 海螺语音 (speech-02)",
+    pillLabel: "MiniMax 海螺",
+    protocol: "minimax",
+    baseUrl: "https://api.minimax.chat/v1/t2a_v2",
+    defaultModel: "speech-02-turbo",
+    models: ["speech-02-turbo", "speech-02-hd", "speech-01-turbo"],
+    voices: [
+      { value: "female-shaonv", label: "活力少女" },
+      { value: "female-yujie", label: "知性御姐" },
+      { value: "male-qn-qingse", label: "青涩青年" },
+      { value: "presenter_male", label: "播客男主播" },
+      { value: "presenter_female", label: "播客女主播" },
+      { value: "audiobook_female_1", label: "有声书女声" },
+    ],
+    description:
+      "MiniMax 海螺高拟真语音大模型，长文本播客朗读韵律自然，支持中英日多语种。",
+    requiresKey: true,
+    applyUrl: "https://platform.minimaxi.com/",
+  },
+  {
+    id: "siliconflow-tts",
+    label: "硅基流动 CosyVoice2 / FishSpeech",
+    pillLabel: "硅基流动",
     protocol: "openai-speech",
-    baseUrl: "https://api.deepseek.com/v1",
-    defaultModel: "tts-1",
-    models: ["tts-1", "tts-1-hd"],
+    baseUrl: "https://api.siliconflow.cn/v1",
+    defaultModel: "FunAudioLLM/CosyVoice2-0.5B",
+    models: [
+      "FunAudioLLM/CosyVoice2-0.5B",
+      "fishaudio/fish-speech-1.5",
+    ],
+    voices: [
+      { value: "FunAudioLLM/CosyVoice2-0.5B:anna", label: "Anna（沉稳女声）" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B:bella", label: "Bella（清亮女声）" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B:claire", label: "Claire（温柔女声）" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B:alex", label: "Alex（沉稳男声）" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B:benjamin", label: "Benjamin（低沉男声）" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B:david", label: "David（欢快男声）" },
+    ],
+    description:
+      "硅基流动云端开源语音推理（CosyVoice2 / FishSpeech），性价比极高；已配硅基流动 AI Key 可留空复用。",
+    requiresKey: true,
+    applyUrl: "https://cloud.siliconflow.cn/account/ak",
+  },
+  {
+    id: "stepfun-tts",
+    label: "阶跃星辰 Step-TTS",
+    pillLabel: "阶跃星辰",
+    protocol: "openai-speech",
+    baseUrl: "https://api.stepfun.com/v1",
+    defaultModel: "step-tts-mini",
+    models: ["step-tts-mini", "step-tts-vivid"],
+    voices: [
+      { value: "cixingnansheng", label: "磁性男声" },
+      { value: "wenrounvsheng", label: "温柔女声" },
+      { value: "ganliannvsheng", label: "干练女声" },
+      { value: "qingchunshaonv", label: "青春少女" },
+    ],
+    description: "阶跃星辰语音合成接口，兼容标准 OpenAI Speech 协议，中文口语自然流畅。",
+    requiresKey: true,
+    applyUrl: "https://platform.stepfun.com/interface-key",
+  },
+  {
+    id: "openai-tts",
+    label: "OpenAI 兼容 TTS (gpt-4o-mini-tts / tts-1)",
+    pillLabel: "OpenAI",
+    protocol: "openai-speech",
+    baseUrl: "https://api.openai.com/v1",
+    defaultModel: "gpt-4o-mini-tts",
+    models: ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"],
     voices: [
       { value: "alloy", label: "Alloy" },
       { value: "nova", label: "Nova" },
       { value: "echo", label: "Echo" },
+      { value: "shimmer", label: "Shimmer" },
+      { value: "coral", label: "Coral" },
+      { value: "sage", label: "Sage" },
     ],
-    description: "OpenAI 兼容语音合成网关，支持自定义兼容节点。",
+    description: "标准 OpenAI /v1/audio/speech 语音合成接口；已配 OpenAI AI Key 可留空复用。",
     requiresKey: true,
-    applyUrl: "https://platform.deepseek.com/api_keys",
+    applyUrl: "https://platform.openai.com/api-keys",
+  },
+  {
+    id: "elevenlabs-tts",
+    label: "ElevenLabs (Multilingual v2)",
+    pillLabel: "ElevenLabs",
+    protocol: "elevenlabs",
+    baseUrl: "https://api.elevenlabs.io/v1",
+    defaultModel: "eleven_multilingual_v2",
+    models: ["eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"],
+    voices: [
+      { value: "21m00Tcm4TlvDq8ikWAM", label: "Rachel（自然女声）" },
+      { value: "EXAVITQu4vr4xnSDxMaL", label: "Sarah（温柔女声）" },
+      { value: "pNInz6obpgDQGcFmaJgB", label: "Adam（播客男声）" },
+      { value: "ErXwobaYiN019PkySvjV", label: "Antoni（叙事男声）" },
+    ],
+    description: "海外顶级多语种拟真语音合成，英文与中英混读表现力极强。",
+    requiresKey: true,
+    applyUrl: "https://elevenlabs.io/app/settings/api-keys",
+  },
+  {
+    id: "fish-audio-tts",
+    label: "Fish Audio 云端语音",
+    pillLabel: "Fish Audio",
+    protocol: "fish-audio",
+    baseUrl: "https://api.fish.audio/v1",
+    defaultModel: "speech-1.6",
+    models: ["speech-1.6", "speech-1.5", "s1"],
+    voices: [
+      { value: "7f92f8afb8ec43bf81429cc1c9199cb1", label: "知性中文女声" },
+      { value: "54a5170264694bfc8e9ad98df7bd89c3", label: "沉稳中文男声" },
+      { value: "802e3bc2b27e49c2995d23ef70e6ac89", label: "清晰播报男声" },
+    ],
+    description: "Fish Audio 云端 TTS 接口，支持社区海量音色 ID（可在「自定义音色」粘贴模型 ID）。",
+    requiresKey: true,
+    applyUrl: "https://fish.audio/go-api/",
   },
   {
     id: "xiaomi-mimo",
-    label: "小米 MiMo 大模型 (mimo-v2.5-tts · 全球接口)",
+    label: "小米 MiMo 大模型 (mimo-v2.5-tts)",
     pillLabel: "小米 MiMo",
     protocol: "xiaomi-mimo",
     baseUrl: "https://api.xiaomimimo.com/v1",
@@ -681,40 +821,24 @@ export const CLOUD_TTS_PRESETS: CloudTtsPreset[] = [
     applyUrl: "https://platform.xiaomimimo.com/",
   },
   {
-    id: "qwen-tts",
-    label: "通义 Qwen-TTS (DashScope)",
-    pillLabel: "通义 Qwen-TTS",
+    id: "deepseek-tts",
+    label: "DeepSeek / 自定义兼容语音网关",
+    pillLabel: "DeepSeek 兼容",
     protocol: "openai-speech",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    defaultModel: "qwen-tts",
-    models: ["qwen-tts", "qwen-tts-latest"],
+    baseUrl: "https://api.siliconflow.cn/v1",
+    defaultModel: "FunAudioLLM/CosyVoice2-0.5B",
+    models: ["FunAudioLLM/CosyVoice2-0.5B", "tts-1", "tts-1-hd"],
     voices: [
-      { value: "Cherry", label: "Cherry（女声）" },
-      { value: "Serena", label: "Serena（温润女声）" },
-      { value: "Ethan", label: "Ethan（男声）" },
-      { value: "Chelsie", label: "Chelsie（双语）" },
-    ],
-    description: "阿里云通义语音大模型，支持中英文自然韵律合成。",
-    requiresKey: true,
-    applyUrl: "https://bailian.console.aliyun.com/",
-  },
-  {
-    id: "openai-tts",
-    label: "OpenAI 兼容 TTS (tts-1 / gpt-4o-mini-tts)",
-    pillLabel: "OpenAI",
-    protocol: "openai-speech",
-    baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4o-mini-tts",
-    models: ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"],
-    voices: [
+      { value: "FunAudioLLM/CosyVoice2-0.5B:anna", label: "Anna（女声）" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B:alex", label: "Alex（男声）" },
       { value: "alloy", label: "Alloy" },
       { value: "nova", label: "Nova" },
       { value: "echo", label: "Echo" },
-      { value: "shimmer", label: "Shimmer" },
     ],
-    description: "标准 /v1/audio/speech 语音合成接口。",
+    description:
+      "DeepSeek 官方暂无原生 TTS 接口，本项默认指向 OpenAI 兼容 TTS 网关（如硅基流动 / OneAPI / 自建中转），可在「高级设置」自定义节点地址。",
     requiresKey: true,
-    applyUrl: "https://platform.openai.com/api-keys",
+    applyUrl: "https://cloud.siliconflow.cn/account/ak",
   },
   {
     id: "edge-tts",
@@ -729,31 +853,11 @@ export const CLOUD_TTS_PRESETS: CloudTtsPreset[] = [
       { value: "zh-CN-YunxiNeural", label: "云希（男声）" },
       { value: "zh-CN-XiaoyiNeural", label: "晓伊（女声）" },
       { value: "zh-CN-YunjianNeural", label: "云健（男声）" },
+      { value: "zh-TW-HsiaoChenNeural", label: "晓臻（台湾女声）" },
+      { value: "zh-HK-HiuMaanNeural", label: "晓曼（粤语女声）" },
     ],
-    description: "微软 Edge 神经网络在线语音，免配置 API Key（需本机安装 edge-tts 或自动回退系统语音）。",
+    description: "微软 Edge 神经网络在线语音，免配置 API Key（优先调用本机 edge-tts，未安装时自动回退系统语音）。",
     requiresKey: false,
-  },
-  {
-    id: "xiaomi-mimo-cn",
-    label: "小米 MiMo (国内节点)",
-    pillLabel: "小米 MiMo (国内)",
-    protocol: "xiaomi-mimo",
-    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-    defaultModel: "mimo-v2.5-tts",
-    models: [
-      "mimo-v2.5-tts",
-      "mimo-v2.5-tts-voicedesign",
-      "mimo-v2.5-tts-voiceclone",
-    ],
-    voices: [
-      { value: "冰糖", label: "冰糖（自然女声）" },
-      { value: "茉莉", label: "茉莉（温润播报）" },
-      { value: "Mia", label: "Mia（英文/双语）" },
-      { value: "Chloe", label: "Chloe（清亮叙事）" },
-    ],
-    description: "小米 MiMo 国内直连节点，低延迟中文语音合成。",
-    requiresKey: true,
-    applyUrl: "https://platform.xiaomimimo.com/",
   },
 ];
 
@@ -762,12 +866,91 @@ export const LOCAL_TTS_MODEL_CATALOG: Omit<
   "installed" | "localPath"
 >[] = [
   {
+    id: "kokoro-82m",
+    name: "Kokoro-82M（超轻量高拟真 · 推荐）",
+    engine: "kokoro",
+    repoId: "hexgrad/Kokoro-82M",
+    sizeLabel: "330 MB",
+    description: "仅 82M 参数的高自然度开源 TTS，支持中英日多音色与本地 OpenAI 兼容服务（如 Kokoro-FastAPI）",
+    defaultBaseUrl: "http://127.0.0.1:8880/v1",
+    voices: [
+      { value: "zf_xiaobei", label: "小北（女声）" },
+      { value: "zf_xiaoni", label: "小妮（女声）" },
+      { value: "zf_xiaoxiao", label: "晓晓（女声）" },
+      { value: "zm_yunjian", label: "云健（男声）" },
+      { value: "zm_yunxi", label: "云希（男声）" },
+      { value: "af_heart", label: "Heart（英文女声）" },
+    ],
+  },
+  {
+    id: "cosyvoice2-0.5b",
+    name: "CosyVoice2-0.5B（阿里开源中英双语）",
+    engine: "cosyvoice",
+    repoId: "FunAudioLLM/CosyVoice2-0.5B",
+    sizeLabel: "1.2 GB",
+    description: "阿里通义实验室开源低延迟流式语音模型，中英混合自然度极高",
+    defaultBaseUrl: "http://127.0.0.1:8000/v1",
+    voices: [
+      { value: "中文女", label: "中文女声" },
+      { value: "中文男", label: "中文男声" },
+      { value: "英文女", label: "英文女声" },
+      { value: "粤语女", label: "粤语女声" },
+    ],
+  },
+  {
+    id: "chattts-local",
+    name: "ChatTTS（对话播客自然停顿）",
+    engine: "chattts",
+    repoId: "2Noise/ChatTTS",
+    sizeLabel: "1.1 GB",
+    description: "专为对话与播客场景优化，支持自然口语节奏、停顿与语气词",
+    defaultBaseUrl: "http://127.0.0.1:8000/v1",
+    voices: [
+      { value: "seed_2", label: "知性女声 (Seed 2)" },
+      { value: "seed_11", label: "温润男声 (Seed 11)" },
+      { value: "seed_2222", label: "自然播报 (Seed 2222)" },
+    ],
+  },
+  {
+    id: "fish-speech-1.5",
+    name: "Fish Speech 1.5（多语种高表现力）",
+    engine: "fish-speech",
+    repoId: "fishaudio/fish-speech-1.5",
+    sizeLabel: "1.5 GB",
+    description: "新一代开源多语种语音合成，支持零样本声音克隆与中英日韩切换",
+    defaultBaseUrl: "http://127.0.0.1:8080/v1",
+    voices: [
+      { value: "default", label: "默认音色" },
+      { value: "female", label: "标准女声" },
+      { value: "male", label: "标准男声" },
+    ],
+  },
+  {
+    id: "sherpa-onnx-vits-zh",
+    name: "Sherpa-ONNX VITS 中文（纯 CPU 极速）",
+    engine: "sherpa-onnx",
+    repoId: "csukuangfj/vits-melo-tts-zh_en",
+    sizeLabel: "180 MB",
+    description: "超轻量纯 CPU 实时离线推理，支持中英混读，无 GPU 也能毫秒级出声",
+    defaultBaseUrl: "http://127.0.0.1:8000/v1",
+    voices: [
+      { value: "0", label: "标准女声 (ID 0)" },
+      { value: "1", label: "温和女声 (ID 1)" },
+    ],
+  },
+  {
     id: "mimo-audio-7b-instruct",
-    name: "小米 MiMo-Audio-7B-Instruct（核心语音大模型）",
+    name: "小米 MiMo-Audio-7B-Instruct（开源大模型）",
     engine: "mimo-audio",
     repoId: "XiaomiMiMo/MiMo-Audio-7B-Instruct",
     sizeLabel: "14.2 GB",
     description: "支持 Instruct-TTS 情感/语气指令、中英双语与多方言本地离线合成",
+    defaultBaseUrl: "http://127.0.0.1:8000/v1",
+    voices: [
+      { value: "冰糖", label: "冰糖（女声）" },
+      { value: "茉莉", label: "茉莉（播报）" },
+      { value: "Mia", label: "Mia（双语）" },
+    ],
   },
   {
     id: "mimo-audio-tokenizer",
@@ -779,10 +962,11 @@ export const LOCAL_TTS_MODEL_CATALOG: Omit<
   },
 ];
 
-export function getCloudTtsPreset(id: CloudTtsProviderId): CloudTtsPreset {
+export function getCloudTtsPreset(id: CloudTtsProviderId | string): CloudTtsPreset {
+  const normalized = id === "xiaomi-mimo-cn" ? "xiaomi-mimo" : id;
   return (
-    CLOUD_TTS_PRESETS.find((p) => p.id === id) ??
-    CLOUD_TTS_PRESETS.find((p) => p.id === "xiaomi-mimo") ??
+    CLOUD_TTS_PRESETS.find((p) => p.id === normalized) ??
+    CLOUD_TTS_PRESETS.find((p) => p.id === "doubao-tts") ??
     CLOUD_TTS_PRESETS[0]
   );
 }
@@ -814,8 +998,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   customGuidePrompt: "",
   translationPair: "auto-zh",
   subtitleDisplayMode: "bilingual",
-  subtitleZhFontSize: 100,
-  subtitleOrigFontSize: 100,
+  subtitleZhFontSize: 50,
+  subtitleOrigFontSize: 50,
   subtitleFontFamily: "system",
   videoSubtitleStyle: "translucent",
   subtitleShowNextAudioLine: false,

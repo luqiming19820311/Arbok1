@@ -562,6 +562,7 @@ export function listEpisodes(): Episode[] {
       isBilingual: hasTranslations || Number(r.is_bilingual) === 1,
       hasAiGuide: Boolean(guide),
       isOffline: r.download_status === "completed",
+      isStarred: Number(r.is_starred ?? 0) === 1,
       gradient:
         (r.gradient as string | null) ??
         "linear-gradient(135deg, #4338ca, #6366f1)",
@@ -611,9 +612,9 @@ export function insertEpisode(ep: Episode): Episode {
     INSERT INTO episodes (
       id, source_id, external_id, platform, channel, title, subtitle, description, cover_url, gradient,
       cover_label, cover_kicker, page_url, date_label, duration_sec,
-      play_position_sec, media_type, audio_url, video_url, stream_expires_at,
+      play_position_sec, is_starred, media_type, audio_url, video_url, stream_expires_at,
       local_file_path, download_status, subtitle_status, is_bilingual, language, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     ep.id,
     validSourceId,
@@ -631,6 +632,7 @@ export function insertEpisode(ep: Episode): Episode {
     ep.date,
     ep.durationSec,
     ep.positionSec,
+    ep.isStarred ? 1 : 0,
     ep.mediaType,
     ep.audioUrl ?? null,
     ep.videoUrl ?? null,
@@ -676,6 +678,7 @@ export function updateEpisodeFields(
     positionSec?: number;
     durationSec?: number;
     isOffline?: boolean;
+    isStarred?: boolean;
     localFilePath?: string | null;
     downloadStatus?: string;
     subtitleStatus?: string;
@@ -695,6 +698,12 @@ export function updateEpisodeFields(
   if (typeof patch.durationSec === "number" && patch.durationSec > 0) {
     db.prepare("UPDATE episodes SET duration_sec = ? WHERE id = ?").run(
       patch.durationSec,
+      episodeId
+    );
+  }
+  if (typeof patch.isStarred === "boolean") {
+    db.prepare("UPDATE episodes SET is_starred = ? WHERE id = ?").run(
+      patch.isStarred ? 1 : 0,
       episodeId
     );
   }

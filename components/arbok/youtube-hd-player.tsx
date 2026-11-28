@@ -2,7 +2,7 @@
 
 import { useEffect, useImperativeHandle, useRef } from "react";
 
-interface YtPlayerInstance {
+export interface YtPlayerInstance {
   playVideo: () => void;
   pauseVideo: () => void;
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
@@ -14,7 +14,21 @@ interface YtPlayerInstance {
   getAvailableQualityLevels?: () => string[];
   setPlaybackQuality?: (suggestedQuality: string) => void;
   setPlaybackQualityRange?: (min: string, max?: string) => void;
+  unloadModule?: (moduleName: string) => void;
+  getOptions?: (moduleName?: string) => string[];
+  setOption?: (moduleName: string, option: string, value: unknown) => void;
   destroy: () => void;
+}
+
+export function disableYouTubeCaptions(player: YtPlayerInstance): void {
+  try {
+    player.setOption?.("captions", "track", {});
+    player.setOption?.("cc", "track", {});
+    player.unloadModule?.("captions");
+    player.unloadModule?.("cc");
+  } catch {
+    /* Captions module may not be attached yet. */
+  }
 }
 
 interface YtNamespace {
@@ -28,6 +42,7 @@ interface YtNamespace {
       playerVars?: Record<string, string | number>;
       events?: {
         onReady?: () => void;
+        onApiChange?: () => void;
         onStateChange?: (event: { data: number }) => void;
         onPlaybackQualityChange?: (event: { data: string }) => void;
         onError?: (event: { data: number }) => void;
@@ -301,6 +316,14 @@ export function YouTubeHdPlayer({
         hostRef.current.appendChild(mountNode);
 
         const initial = latestPropsRef.current;
+        let pendingInitialSeek: { target: number; deadline: number } | null =
+          initial.initialTimeSec > 1
+            ? {
+                target: initial.initialTimeSec,
+                deadline: Date.now() + 6000,
+              }
+            : null;
+
         const player = new YT.Player(mountNode, {
           videoId,
           host: "https://www.youtube-nocookie.com",
@@ -323,6 +346,7 @@ export function YouTubeHdPlayer({
               if (cancelled) return;
               readyRef.current = true;
               const cur = latestPropsRef.current;
+              disableYouTubeCaptions(player);
               player.setVolume(Math.round(cur.volume * 100));
               player.setPlaybackRate(cur.playbackRate);
               applyQuality(player, cur.preferredQuality);
@@ -331,6 +355,10 @@ export function YouTubeHdPlayer({
                 cur.onDurationReady(Math.round(dur));
               }
               if (cur.initialTimeSec > 1) {
+                pendingInitialSeek = {
+                  target: cur.initialTimeSec,
+                  deadline: Date.now() + 6000,
+                };
                 player.seekTo(cur.initialTimeSec, true);
               }
               if (cur.isPlaying) {
@@ -338,10 +366,23 @@ export function YouTubeHdPlayer({
               }
               reportQuality(player);
             },
+            onApiChange: () => {
+              if (cancelled) return;
+              disableYouTubeCaptions(player);
+            },
             onStateChange: (ev) => {
               if (cancelled) return;
               const cur = latestPropsRef.current;
               if (ev.data === YT.PlayerState.PLAYING) {
+                disableYouTubeCaptions(player);
+                if (pendingInitialSeek) {
+                  const nowSec = player.getCurrentTime?.() ?? 0;
+                  if (nowSec < pendingInitialSeek.target - 3) {
+                    player.seekTo(pendingInitialSeek.target, true);
+                  } else if (Math.abs(nowSec - pendingInitialSeek.target) <= 3) {
+                    pendingInitialSeek = null;
+                  }
+                }
                 cur.onBufferingChange(false);
                 cur.onPlayingChange(true);
                 reportQuality(player);
@@ -349,8 +390,10 @@ export function YouTubeHdPlayer({
                 cur.onBufferingChange(false);
                 cur.onPlayingChange(false);
               } else if (ev.data === YT.PlayerState.BUFFERING) {
+                disableYouTubeCaptions(player);
                 cur.onBufferingChange(true);
               } else if (ev.data === YT.PlayerState.ENDED) {
+                pendingInitialSeek = null;
                 cur.onBufferingChange(false);
                 cur.onEnded();
               }
@@ -373,12 +416,30 @@ export function YouTubeHdPlayer({
 
         playerRef.current = player;
 
+        let captionCheckTick = 0;
         pollTimer = window.setInterval(() => {
           if (!readyRef.current || !playerRef.current) return;
           try {
             const t = playerRef.current.getCurrentTime();
             if (Number.isFinite(t) && t >= 0) {
-              latestPropsRef.current.onTimeUpdate(t);
+              if (pendingInitialSeek) {
+                if (Math.abs(t - pendingInitialSeek.target) <= 3) {
+                  pendingInitialSeek = null;
+                  latestPropsRef.current.onTimeUpdate(t);
+                } else if (Date.now() >= pendingInitialSeek.deadline) {
+                  pendingInitialSeek = null;
+                  latestPropsRef.current.onTimeUpdate(t);
+                }
+              } else {
+                latestPropsRef.current.onTimeUpdate(t);
+              }
+            }
+            captionCheckTick += 1;
+            if (captionCheckTick % 4 === 0) {
+              const modules = playerRef.current.getOptions?.() ?? [];
+              if (modules.includes("captions") || modules.includes("cc")) {
+                disableYouTubeCaptions(playerRef.current);
+              }
             }
           } catch {
             /* ignore */

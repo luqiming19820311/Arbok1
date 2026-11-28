@@ -380,4 +380,180 @@ test("translation automatically retries transient failures, coerces string IDs, 
   expect(result.segments[1].zh).toContain("已补翻");
   expect(result.segments[2].zh).toContain("已补翻");
   expect(result.segments[3].zh).toContain("已补翻");
+  expect(result.missingCount).toBe(0);
+});
+
+test("chat supports per-request provider/model override and translation recovers renumbered IDs", async () => {
+  setSecret("llm:qwen", "sk-qwen-chat-test");
+  saveAppSettings({ llmProvider: "deepseek", llmModel: "deepseek-chat" });
+
+  let seenChatUrl = "";
+  let seenChatBody: { model?: string; messages?: Array<{ content: string }> } = {};
+  const encoder = new TextEncoder();
+  const chatFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    seenChatUrl = String(input);
+    seenChatBody = JSON.parse(String(init?.body)) as typeof seenChatBody;
+    const sse = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"content":"1. **要点一**：清晰换行 [00:29]\\n2. **要点二**：支持切模型"}}]}\n\n'
+          )
+        );
+        c.enqueue(encoder.encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    });
+    return new Response(sse, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+
+  await streamEpisodeChat("ep-yt-1", "总结要点", () => {}, {
+    provider: "qwen",
+    model: "qwen-max",
+    fetchImpl: chatFetch,
+  });
+  expect(seenChatUrl).toContain("dashscope.aliyuncs.com");
+  expect(seenChatBody.model).toBe("qwen-max");
+  expect(seenChatBody.messages?.[0]?.content).toContain("每一点单独换一行");
+
+  // Translation positional fallback when LLM renumbers IDs as 1..N instead of DB IDs
+  setSecret("llm:deepseek", "sk-ds-test");
+  insertEpisode({
+    id: "ep-renumber",
+    subId: null,
+    platform: "youtube",
+    channel: "Test",
+    title: "Renumber Test",
+    date: "刚刚",
+    durationSec: 30,
+    positionSec: 0,
+    mediaType: "video",
+    language: "en",
+    hasOfficialSub: true,
+    isBilingual: false,
+    hasAiGuide: false,
+    isOffline: false,
+    gradient: "",
+    coverLabel: "EN",
+    pageUrl: "https://youtube.com/watch?v=renum",
+    transcript: [
+      { id: 901, start: 0, end: 10, orig: "First sentence in English." },
+      { id: 902, start: 10, end: 20, orig: "Second sentence in English." },
+    ],
+    guide: null,
+    chat: [],
+  });
+
+  const renumFetch = (async () =>
+    makeJsonResponse({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              translations: [
+                { id: 1, zh: "第一句中文。" },
+                { id: 2, zh: "第二句中文。" },
+              ],
+            }),
+          },
+        },
+      ],
+    })) as typeof fetch;
+
+  const tr = await translateEpisodeTranscript("ep-renumber", {
+    batchSize: 2,
+    concurrency: 1,
+    fetchImpl: renumFetch,
+  });
+  expect(tr.missingCount).toBe(0);
+  expect(tr.segments.map((s) => s.zh)).toEqual(["第一句中文。", "第二句中文。"]);
+});
+
+test("translation recovers from stalled HTTP requests via timeout and finishes proper-noun lines without hanging", async () => {
+  setSecret("llm:deepseek", "sk-ds-test");
+  saveAppSettings({ llmProvider: "deepseek", llmModel: "deepseek-chat" });
+
+  insertEpisode({
+    id: "ep-stall-recovery",
+    subId: null,
+    platform: "youtube",
+    channel: "Y Combinator",
+    title: "Stall Recovery Episode",
+    date: "刚刚",
+    durationSec: 60,
+    positionSec: 0,
+    mediaType: "video",
+    language: "en",
+    hasOfficialSub: true,
+    isBilingual: false,
+    hasAiGuide: false,
+    isOffline: false,
+    gradient: "",
+    coverLabel: "YC",
+    pageUrl: "https://youtube.com/watch?v=stall_test",
+    transcript: [
+      { id: 1, start: 0, end: 10, orig: "Welcome to our debate on frontier AI." },
+      { id: 2, start: 10, end: 20, orig: "Y Combinator" },
+      { id: 3, start: 20, end: 30, orig: "Anthropic and OpenAI are building rapidly." },
+      { id: 4, start: 30, end: 40, orig: "Let us discuss safety timelines." },
+    ],
+    guide: null,
+    chat: [],
+  });
+
+  let batch1Attempts = 0;
+  const mockFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const reqBody = JSON.parse(String(init?.body)) as {
+      messages: Array<{ content: string }>;
+    };
+    const userPrompt = reqBody.messages[1].content;
+    const jsonPart = userPrompt.slice(userPrompt.indexOf('{"prevContext"'));
+    const parsed = JSON.parse(jsonPart) as {
+      targets: Array<{ id: number; text: string }>;
+    };
+
+    const isFirstBatch = parsed.targets.some((t) =>
+      t.text.includes("Welcome to our debate")
+    );
+    if (isFirstBatch && batch1Attempts === 0) {
+      batch1Attempts += 1;
+      // Simulate a hung upstream socket that only terminates when AbortSignal fires.
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      });
+    }
+
+    return makeJsonResponse({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              translations: parsed.targets.map((t) => ({
+                id: t.id,
+                // Keep "Y Combinator" verbatim like real LLMs do for brand names.
+                zh: t.text === "Y Combinator" ? "Y Combinator" : `译：${t.text}`,
+              })),
+            }),
+          },
+        },
+      ],
+    });
+  }) as typeof fetch;
+
+  const result = await translateEpisodeTranscript("ep-stall-recovery", {
+    batchSize: 2,
+    concurrency: 2,
+    timeoutMs: 60,
+    fetchImpl: mockFetch,
+  });
+
+  expect(batch1Attempts).toBe(1);
+  expect(result.missingCount).toBe(0);
+  expect(result.segments.every((s) => Boolean(s.zh?.trim()))).toBe(true);
+  expect(result.segments[1].zh).toBe("Y Combinator");
 });

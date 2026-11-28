@@ -43,17 +43,22 @@ import {
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DEFAULT_APP_SETTINGS,
+  LLM_PROVIDER_PRESETS,
   LOCAL_ASR_MODEL_CATALOG,
   LOCAL_TTS_MODEL_CATALOG,
   LOCAL_AI_CLI_METADATA,
+  getCloudTtsPreset,
+  getDefaultLocalAiCliConfig,
   getLlmPreset,
+  isLocalAiProviderId,
 } from "@/lib/arbok/providers";
 import { getUiCopy, resolveUiLocale } from "@/lib/arbok/i18n";
-import { evaluateTtsSync } from "@/lib/arbok/tts-sync";
+import { canResumePausedTtsAudio, evaluateTtsSync } from "@/lib/arbok/tts-sync";
 import { AddSourceDialog } from "./add-source-dialog";
 import { initArbokAgentBridge } from "./agent-bridge";
 import { ArbokLogo } from "./arbok-icons";
 import { ExportMarkdownDialog } from "./export-markdown-dialog";
+import { FavoritesView } from "./favorites-view";
 import { HomeFeed } from "./home-feed";
 import { ImmersivePlayer } from "./immersive-player";
 import { ManageSubscriptionsDialog } from "./manage-subscriptions-dialog";
@@ -245,6 +250,10 @@ export function ArbokApp() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
   const [windowDragActive, setWindowDragActive] = useState(false);
+  const [pipActive, setPipActive] = useState(false);
+  const [pipMode, setPipMode] = useState<"none" | "desktop" | "document" | "floating">("none");
+  const [docPipContainer, setDocPipContainer] = useState<HTMLElement | null>(null);
+  const docPipWindowRef = useRef<Window | null>(null);
 
   const [cacheUsedMb, setCacheUsedMb] = useState(412);
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
@@ -281,6 +290,7 @@ export function ArbokApp() {
     null
   );
   const [streamingChatText, setStreamingChatText] = useState<string | null>(null);
+  const [chatModelChoice, setChatModelChoice] = useState<string>("default");
 
   const listSearchRef = useRef<HTMLInputElement | null>(null);
   const subSearchRef = useRef<HTMLInputElement | null>(null);
@@ -288,6 +298,7 @@ export function ArbokApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const ytPlayerRef = useRef<YouTubeHdPlayerHandle | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
+  const pendingSeekDeadlineRef = useRef<number>(0);
   const lastReportedPosRef = useRef<number>(0);
   const translationAbortRef = useRef<AbortController | null>(null);
   const translationInFlightRef = useRef(false);
@@ -300,6 +311,7 @@ export function ArbokApp() {
   const ttsBusyRef = useRef<boolean>(false);
   const pausedByTtsRef = useRef<boolean>(false);
   const ttsSessionRef = useRef<number>(0);
+  const ttsRequestSeqRef = useRef<number>(0);
   const latestVideoSegIdxRef = useRef<number>(-1);
   const latestEpisodeRef = useRef<Episode>(INITIAL_EPISODES[0]);
   const latestSettingsRef = useRef<AppSettings>(DEFAULT_APP_SETTINGS);
@@ -367,6 +379,18 @@ export function ArbokApp() {
         if (Array.isArray(data.notes)) setNotes(data.notes);
         if (data.settings) {
           const merged = { ...DEFAULT_APP_SETTINGS, ...data.settings };
+          // Migrate legacy removed xiaomi-mimo-cn and old Qwen compatible-mode TTS URLs.
+          if ((merged.cloudTtsProvider as string) === "xiaomi-mimo-cn") {
+            merged.cloudTtsProvider = "xiaomi-mimo";
+            merged.cloudTtsBaseUrl = "https://api.xiaomimimo.com/v1";
+          }
+          if (
+            merged.cloudTtsProvider === "qwen-tts" &&
+            merged.cloudTtsBaseUrl?.includes("dashscope.aliyuncs.com/compatible-mode")
+          ) {
+            merged.cloudTtsBaseUrl =
+              "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+          }
           setSettings(merged);
           if (merged.subtitleDisplayMode) {
             setSubtitleMode(merged.subtitleDisplayMode);
@@ -557,6 +581,15 @@ export function ArbokApp() {
               if (data.keyStatus) setKeyStatus(data.keyStatus);
               setBiliQr(null);
               toaster.success(data.message ?? "B站扫码登录成功");
+              const curEp = latestEpisodeRef.current;
+              if (
+                curEp &&
+                curEp.platform === "bilibili" &&
+                curEp.transcript.length === 0 &&
+                !isDemoPlaceholder(curEp)
+              ) {
+                void handleFetchOfficialSubtitles(curEp.id, true);
+              }
             } else {
               setBiliQr((prev) =>
                 prev
@@ -574,6 +607,7 @@ export function ArbokApp() {
     }, 2000);
 
     return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [biliQr, settingsDialogOpen, settingsTab, toaster]);
 
   useEffect(() => {
@@ -584,9 +618,44 @@ export function ArbokApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ positionSec: currentEpisode.positionSec }),
       }).catch(() => {});
-    }, 1500);
+    }, 1000);
     return () => window.clearTimeout(saveTimer);
   }, [currentEpisode.id, currentEpisode.positionSec]);
+
+  useEffect(() => {
+    if (!isBrowserBackendEnabled()) return;
+    const persistCurrentPositionNow = () => {
+      const ep = latestEpisodeRef.current;
+      if (!ep) return;
+      const activeEl = videoRef.current ?? audioRef.current;
+      const liveTime =
+        pendingSeekRef.current !== null
+          ? pendingSeekRef.current
+          : activeEl && activeEl.readyState >= 1 && activeEl.currentTime > 0
+            ? activeEl.currentTime
+            : Math.max(ep.positionSec, lastReportedPosRef.current > 0 ? lastReportedPosRef.current : 0);
+      if (liveTime <= 0) return;
+      void fetch(`/api/episodes/${encodeURIComponent(ep.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({ positionSec: liveTime }),
+      }).catch(() => {});
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        persistCurrentPositionNow();
+      }
+    };
+    window.addEventListener("beforeunload", persistCurrentPositionNow);
+    window.addEventListener("pagehide", persistCurrentPositionNow);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", persistCurrentPositionNow);
+      window.removeEventListener("pagehide", persistCurrentPositionNow);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isBrowserBackendEnabled()) return;
@@ -916,6 +985,16 @@ export function ArbokApp() {
         currentEpisode.mediaType === "video"
       ) {
         setAudioOnly((prev) => !prev);
+      } else if (
+        event.key.toLowerCase() === "p" &&
+        viewMode === "player" &&
+        currentEpisode.mediaType === "video"
+      ) {
+        event.preventDefault();
+        void handleTogglePip();
+      } else if (event.key === "Escape" && pipActive) {
+        event.preventDefault();
+        void handleTogglePip(false);
       }
     }
 
@@ -949,10 +1028,73 @@ export function ArbokApp() {
     return useVideoElement ? videoRef.current : audioRef.current;
   }
 
+  function getLivePlaybackPosition(): number {
+    if (pendingSeekRef.current !== null && pendingSeekRef.current > 0) {
+      return pendingSeekRef.current;
+    }
+    if (!useYouTubeHd) {
+      const el = getActiveMediaElement();
+      if (el && el.readyState >= 1 && Number.isFinite(el.currentTime) && el.currentTime > 0) {
+        return el.currentTime;
+      }
+    }
+    return Math.max(0, currentEpisode.positionSec);
+  }
+
+  function flushEpisodePosition(epId: string, posSec: number) {
+    if (!isBrowserBackendEnabled() || !Number.isFinite(posSec) || posSec < 0) return;
+    void fetch(`/api/episodes/${encodeURIComponent(epId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({ positionSec: posSec }),
+    }).catch(() => {});
+  }
+
+  function armPendingSeek(posSec: number) {
+    if (posSec > 0.5) {
+      pendingSeekRef.current = posSec;
+      pendingSeekDeadlineRef.current = Date.now() + 5000;
+      lastReportedPosRef.current = posSec;
+    } else {
+      pendingSeekRef.current = null;
+      pendingSeekDeadlineRef.current = 0;
+      lastReportedPosRef.current = Math.max(0, posSec);
+    }
+  }
+
+  function applyPendingSeek(el: HTMLMediaElement | null) {
+    if (!el || pendingSeekRef.current === null) return;
+    const desiredPos = pendingSeekRef.current;
+    if (desiredPos <= 0.5) {
+      pendingSeekRef.current = null;
+      pendingSeekDeadlineRef.current = 0;
+      return;
+    }
+    const maxDur =
+      Number.isFinite(el.duration) && el.duration > 1
+        ? el.duration
+        : latestEpisodeRef.current.durationSec;
+    const target = maxDur > 2 ? Math.min(desiredPos, maxDur - 1) : desiredPos;
+    if (Math.abs(el.currentTime - target) <= 2.5) {
+      pendingSeekRef.current = null;
+      pendingSeekDeadlineRef.current = 0;
+      return;
+    }
+    if (el.readyState >= 1) {
+      try {
+        el.currentTime = target;
+        lastReportedPosRef.current = target;
+      } catch {
+        // Retry on canplay if the browser rejects seek before range metadata resolves.
+      }
+    }
+  }
+
   function handleMediaLoadedMetadata(el: HTMLMediaElement | null) {
     if (!el) return;
     el.playbackRate = playbackRate;
-    el.volume = volume;
+    el.volume = effectiveMediaVolume;
     if ("videoHeight" in el) {
       const h = (el as HTMLVideoElement).videoHeight;
       if (h > 0) {
@@ -988,15 +1130,10 @@ export function ArbokApp() {
     }
 
     const desiredPos = pendingSeekRef.current ?? currentEpisode.positionSec;
-    if (
-      desiredPos > 0.5 &&
-      Number.isFinite(el.duration) &&
-      desiredPos < el.duration - 1
-    ) {
-      el.currentTime = desiredPos;
-      lastReportedPosRef.current = desiredPos;
+    if (desiredPos > 0.5 && pendingSeekRef.current === null) {
+      armPendingSeek(desiredPos);
     }
-    pendingSeekRef.current = null;
+    applyPendingSeek(el);
 
     if (isPlaying) {
       const p = el.play();
@@ -1006,9 +1143,33 @@ export function ArbokApp() {
     }
   }
 
+  function handleMediaCanPlay(el: HTMLMediaElement | null) {
+    setIsBuffering(false);
+    applyPendingSeek(el);
+  }
+
   function handleMediaTimeUpdate(el: HTMLMediaElement | null) {
     if (!el) return;
     const t = el.currentTime;
+    if (pendingSeekRef.current !== null) {
+      const target = pendingSeekRef.current;
+      if (Math.abs(t - target) <= 2.5) {
+        pendingSeekRef.current = null;
+        pendingSeekDeadlineRef.current = 0;
+      } else if (Date.now() < pendingSeekDeadlineRef.current) {
+        if (el.readyState >= 1) {
+          applyPendingSeek(el);
+        }
+        return;
+      } else {
+        pendingSeekRef.current = null;
+        pendingSeekDeadlineRef.current = 0;
+      }
+    }
+    // Guard against transient 0-second ticks emitted right as a media element swaps src.
+    if (t < 1 && lastReportedPosRef.current > 5 && el.readyState < 2) {
+      return;
+    }
     if (Math.abs(t - lastReportedPosRef.current) < 0.25) return;
     lastReportedPosRef.current = t;
     setEpisodes((prev) =>
@@ -1121,8 +1282,7 @@ export function ArbokApp() {
     setIsPlaying(true);
   }
 
-  function stopTtsDubbing(options?: { keepEnabled?: boolean }) {
-    ttsSessionRef.current += 1;
+  function stopActiveTtsAudioElement() {
     if (ttsAudioRef.current) {
       ttsAudioRef.current.onended = null;
       ttsAudioRef.current.onerror = null;
@@ -1133,6 +1293,12 @@ export function ArbokApp() {
       URL.revokeObjectURL(ttsObjectUrlRef.current);
       ttsObjectUrlRef.current = null;
     }
+  }
+
+  function stopTtsDubbing(options?: { keepEnabled?: boolean }) {
+    ttsSessionRef.current += 1;
+    ttsRequestSeqRef.current += 1;
+    stopActiveTtsAudioElement();
     ttsCurrentIdxRef.current = -1;
     ttsBusyRef.current = false;
     pausedByTtsRef.current = false;
@@ -1144,7 +1310,7 @@ export function ArbokApp() {
 
   function fetchTtsAudioBlob(epId: string, segId: number, text: string): Promise<Blob> {
     const s = latestSettingsRef.current;
-    const cacheKey = `${epId}::${segId}::${s.ttsEngine}::${s.cloudTtsProvider}::${s.cloudTtsModel}::${s.cloudTtsVoice}::${s.localTtsModelId}`;
+    const cacheKey = `${epId}::${segId}::${s.ttsEngine}::${s.cloudTtsProvider}::${s.cloudTtsModel}::${s.cloudTtsVoice}::${s.localTtsModelId}::${s.localTtsVoice}::${s.ttsSpeed ?? 1}::${s.localTtsVoiceStyle ?? ""}`;
     const cached = ttsCacheRef.current.get(cacheKey);
     if (cached) return Promise.resolve(cached);
 
@@ -1223,6 +1389,9 @@ export function ArbokApp() {
       return;
     }
 
+    // Stop any prior utterance and stamp a monotonic request id so overlapping cloud responses never play together.
+    stopActiveTtsAudioElement();
+    const myRequestSeq = ++ttsRequestSeqRef.current;
     ttsCurrentIdxRef.current = idx;
     ttsBusyRef.current = true;
     if (!pausedByTtsRef.current) {
@@ -1240,11 +1409,14 @@ export function ArbokApp() {
 
     try {
       const blob = await fetchTtsAudioBlob(ep.id, list[idx].id, text);
-      if (sessionId !== ttsSessionRef.current) return;
-
-      if (ttsObjectUrlRef.current) {
-        URL.revokeObjectURL(ttsObjectUrlRef.current);
+      if (
+        sessionId !== ttsSessionRef.current ||
+        myRequestSeq !== ttsRequestSeqRef.current
+      ) {
+        return;
       }
+
+      stopActiveTtsAudioElement();
       const url = URL.createObjectURL(blob);
       ttsObjectUrlRef.current = url;
 
@@ -1253,7 +1425,17 @@ export function ArbokApp() {
       ttsAudioRef.current = audio;
 
       audio.onended = () => {
-        if (sessionId !== ttsSessionRef.current) return;
+        audio.onended = null;
+        audio.onerror = null;
+        if (ttsAudioRef.current === audio) {
+          ttsAudioRef.current = null;
+        }
+        if (
+          sessionId !== ttsSessionRef.current ||
+          myRequestSeq !== ttsRequestSeqRef.current
+        ) {
+          return;
+        }
         ttsBusyRef.current = false;
         const nextIdx = idx + 1;
         const decision = evaluateTtsSync({
@@ -1275,18 +1457,47 @@ export function ArbokApp() {
       };
 
       audio.onerror = () => {
+        audio.onended = null;
+        audio.onerror = null;
+        if (ttsAudioRef.current === audio) {
+          ttsAudioRef.current = null;
+        }
         if (sessionId !== ttsSessionRef.current) return;
         ttsBusyRef.current = false;
       };
 
       await audio.play();
     } catch (err) {
-      if (sessionId !== ttsSessionRef.current) return;
+      if (
+        sessionId !== ttsSessionRef.current ||
+        myRequestSeq !== ttsRequestSeqRef.current
+      ) {
+        return;
+      }
       stopTtsDubbing();
       toaster.error(
-        err instanceof Error ? err.message : "中文 TTS 播报失败，请检查小米 MiMo 配置"
+        err instanceof Error ? err.message : "中文 TTS 播报失败，请检查语音播报配置"
       );
     }
+  }
+
+  function hasConfiguredCloudTtsKey(provider: AppSettings["cloudTtsProvider"]): boolean {
+    const preset = getCloudTtsPreset(provider);
+    if (preset.requiresKey === false) return true;
+    if (keyStatus.ttsKeys?.[provider]?.configured) return true;
+    if (provider === "doubao-tts") return Boolean(keyStatus.asrKeys?.doubao?.configured);
+    if (provider === "qwen-tts") return Boolean(keyStatus.llmKeys?.qwen?.configured);
+    if (provider === "siliconflow-tts") {
+      return Boolean(keyStatus.llmKeys?.siliconflow?.configured);
+    }
+    if (provider === "openai-tts") return Boolean(keyStatus.llmKeys?.openai?.configured);
+    if (provider === "deepseek-tts") {
+      return Boolean(
+        keyStatus.llmKeys?.siliconflow?.configured ||
+          keyStatus.llmKeys?.deepseek?.configured
+      );
+    }
+    return false;
   }
 
   function handleToggleTtsDubbing(enabled: boolean) {
@@ -1307,8 +1518,7 @@ export function ArbokApp() {
     if (
       isBrowserBackendEnabled() &&
       settings.ttsEngine === "cloud" &&
-      settings.cloudTtsProvider !== "edge-tts" &&
-      !keyStatus.ttsKeys?.[settings.cloudTtsProvider]?.configured
+      !hasConfiguredCloudTtsKey(settings.cloudTtsProvider)
     ) {
       toaster.warning(
         "请先在「偏好设置 → 语音播报 (TTS)」配置云端 API Key，或切换为本地系统增强语音"
@@ -1319,6 +1529,8 @@ export function ArbokApp() {
     }
 
     ttsSessionRef.current += 1;
+    ttsRequestSeqRef.current += 1;
+    stopActiveTtsAudioElement();
     ttsCurrentIdxRef.current = -1;
     ttsBusyRef.current = false;
     pausedByTtsRef.current = false;
@@ -1346,12 +1558,12 @@ export function ArbokApp() {
       }
 
       if (isPlaying) {
-        if (ttsAudioRef.current && ttsAudioRef.current.paused && ttsBusyRef.current) {
-          void ttsAudioRef.current.play().catch(() => {});
+        if (canResumePausedTtsAudio(ttsAudioRef.current) && ttsBusyRef.current) {
+          void ttsAudioRef.current?.play().catch(() => {});
           return;
         }
 
-        if (ttsCurrentIdxRef.current < 0) {
+        if (ttsCurrentIdxRef.current < 0 && !ttsBusyRef.current) {
           void speakTtsIndex(currentVideoSegIdx, ttsSessionRef.current);
           return;
         }
@@ -1390,8 +1602,7 @@ export function ArbokApp() {
 
   function handleSeek(sec: number, autoPlay = true) {
     const clamped = Math.max(0, Math.min(currentEpisode.durationSec, sec));
-    lastReportedPosRef.current = clamped;
-    pendingSeekRef.current = clamped;
+    armPendingSeek(clamped);
     if (ttsDubbingEnabled) {
       stopTtsDubbing({ keepEnabled: true });
     }
@@ -1400,9 +1611,11 @@ export function ArbokApp() {
         ep.id === currentEpId ? { ...ep, positionSec: clamped } : ep
       )
     );
+    flushEpisodePosition(currentEpisode.id, clamped);
     if (useYouTubeHd) {
       ytPlayerRef.current?.seekTo(clamped);
       pendingSeekRef.current = null;
+      pendingSeekDeadlineRef.current = 0;
       if (autoPlay) {
         setIsPlaying(true);
         ytPlayerRef.current?.play();
@@ -1413,6 +1626,7 @@ export function ArbokApp() {
     if (activeEl && activeEl.readyState >= 1) {
       activeEl.currentTime = clamped;
       pendingSeekRef.current = null;
+      pendingSeekDeadlineRef.current = 0;
     }
     if (autoPlay) setIsPlaying(true);
   }
@@ -1456,12 +1670,176 @@ export function ArbokApp() {
   }
 
   function handleAudioOnlyChange(nextAudioOnly: boolean) {
-    pendingSeekRef.current = currentEpisode.positionSec;
+    const livePos = getLivePlaybackPosition();
+    armPendingSeek(livePos);
+    setEpisodes((prev) =>
+      prev.map((ep) =>
+        ep.id === currentEpId ? { ...ep, positionSec: livePos } : ep
+      )
+    );
+    flushEpisodePosition(currentEpisode.id, livePos);
+    if (nextAudioOnly && pipActive) {
+      void handleTogglePip(false);
+    }
     setAudioOnly(nextAudioOnly);
   }
 
+  async function handleTogglePip(force?: boolean) {
+    const next = typeof force === "boolean" ? force : !pipActive;
+
+    if (!next) {
+      const desktopApi = (
+        window as unknown as {
+          arbokDesktop?: { setPipMode?: (enabled: boolean) => Promise<boolean> };
+        }
+      ).arbokDesktop;
+      if (desktopApi?.setPipMode) {
+        await desktopApi.setPipMode(false).catch(() => {});
+      }
+      if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+        docPipWindowRef.current.close();
+      }
+      docPipWindowRef.current = null;
+      setDocPipContainer(null);
+      setPipActive(false);
+      setPipMode("none");
+      return;
+    }
+
+    if (currentEpisode.mediaType !== "video") {
+      toaster.info("当前单集为纯音频播客，仅视频单集支持画中画播放");
+      return;
+    }
+
+    if (audioOnly) {
+      pendingSeekRef.current = currentEpisode.positionSec;
+      setAudioOnly(false);
+    }
+
+    const desktopApi = (
+      window as unknown as {
+        arbokDesktop?: {
+          isDesktop?: boolean;
+          setPipMode?: (enabled: boolean) => Promise<boolean>;
+        };
+      }
+    ).arbokDesktop;
+
+    if (desktopApi?.setPipMode) {
+      try {
+        await desktopApi.setPipMode(true);
+        setPipMode("desktop");
+        setPipActive(true);
+        return;
+      } catch {
+        // Fallback to in-app floating PiP if desktop IPC fails.
+      }
+    }
+
+    const docPipApi = (
+      window as unknown as {
+        documentPictureInPicture?: {
+          requestWindow: (opts: { width: number; height: number }) => Promise<Window>;
+        };
+      }
+    ).documentPictureInPicture;
+
+    if (docPipApi && typeof docPipApi.requestWindow === "function") {
+      try {
+        const pipWin = await docPipApi.requestWindow({
+          width: 520,
+          height: 293,
+        });
+        pipWin.document.documentElement.setAttribute("data-theme", resolvedTheme);
+        pipWin.document.body.style.margin = "0";
+        pipWin.document.body.style.background = "#18181b";
+        pipWin.document.body.style.overflow = "hidden";
+
+        for (const sheet of Array.from(document.styleSheets)) {
+          try {
+            const cssText = Array.from(sheet.cssRules)
+              .map((r) => r.cssText)
+              .join("\n");
+            const styleEl = pipWin.document.createElement("style");
+            styleEl.textContent = cssText;
+            pipWin.document.head.appendChild(styleEl);
+          } catch {
+            if (sheet.href) {
+              const link = pipWin.document.createElement("link");
+              link.rel = "stylesheet";
+              link.href = sheet.href;
+              pipWin.document.head.appendChild(link);
+            }
+          }
+        }
+
+        const mount = pipWin.document.createElement("div");
+        mount.style.width = "100vw";
+        mount.style.height = "100vh";
+        pipWin.document.body.appendChild(mount);
+
+        docPipWindowRef.current = pipWin;
+        pipWin.addEventListener(
+          "pagehide",
+          () => {
+            if (docPipWindowRef.current === pipWin) {
+              docPipWindowRef.current = null;
+              setDocPipContainer(null);
+              setPipActive(false);
+              setPipMode("none");
+            }
+          },
+          { once: true }
+        );
+
+        setDocPipContainer(mount);
+        setPipMode("document");
+        setPipActive(true);
+        return;
+      } catch {
+        // Fallback to in-app floating PiP when Document PiP is unavailable or blocked.
+      }
+    }
+
+    setPipMode("floating");
+    setPipActive(true);
+  }
+
+  function handleToggleStarred(epId: string) {
+    const target = episodes.find((e) => e.id === epId);
+    if (!target) return;
+    const nextStarred = !Boolean(target.isStarred);
+    setEpisodes((prev) =>
+      prev.map((ep) =>
+        ep.id === epId ? { ...ep, isStarred: nextStarred } : ep
+      )
+    );
+    if (isBrowserBackendEnabled()) {
+      void fetch(`/api/episodes/${encodeURIComponent(epId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isStarred: nextStarred }),
+      }).catch(() => {});
+    }
+    if (nextStarred) {
+      toaster.success(`已收藏「${target.title}」`);
+    } else {
+      toaster.info(`已取消收藏「${target.title}」`);
+    }
+  }
+
+  function handlePlayAllFavorites(epIds: string[]) {
+    if (epIds.length === 0) return;
+    const [firstId, ...restIds] = epIds;
+    persistPlayQueue(restIds);
+    openEpisode(firstId);
+    setIsPlaying(true);
+    toaster.success(`开始播放收藏列表（共 ${epIds.length} 集）`);
+  }
+
   function handleVideoQualityChange(nextQuality: string) {
-    pendingSeekRef.current = currentEpisode.positionSec;
+    const livePos = getLivePlaybackPosition();
+    armPendingSeek(livePos);
     setVideoQuality(nextQuality);
     if (useYouTubeHd) {
       ytPlayerRef.current?.setQuality(nextQuality);
@@ -1489,7 +1867,17 @@ export function ArbokApp() {
   }
 
   function handleBackToList() {
-    pendingSeekRef.current = currentEpisode.positionSec;
+    const livePos = getLivePlaybackPosition();
+    armPendingSeek(livePos);
+    setEpisodes((prev) =>
+      prev.map((ep) =>
+        ep.id === currentEpId ? { ...ep, positionSec: livePos } : ep
+      )
+    );
+    flushEpisodePosition(currentEpisode.id, livePos);
+    if (pipActive) {
+      void handleTogglePip(false);
+    }
     setViewMode("list");
   }
 
@@ -1508,6 +1896,8 @@ export function ArbokApp() {
       const data = (await res.json()) as {
         transcript?: TranscriptSegment[];
         description?: string;
+        notice?: string;
+        needLogin?: boolean;
         error?: string;
       };
       if (res.ok && ((data.transcript && data.transcript.length > 0) || data.description)) {
@@ -1529,11 +1919,32 @@ export function ArbokApp() {
         );
         if (data.transcript && data.transcript.length > 0 && force) {
           toaster.success(`已拉取完整官方字幕（共 ${data.transcript.length} 句）`);
+        } else if (force && (!data.transcript || data.transcript.length === 0)) {
+          if (data.needLogin) {
+            toaster.warning(
+              data.notice ??
+                "该 B站视频官方 AI 字幕需要登录后解锁，请先在「偏好设置 → B站账号」扫码登录"
+            );
+          } else {
+            toaster.info(
+              data.notice ??
+                "该单集暂无可用的平台官方字幕，可使用 ASR 语音转写"
+            );
+          }
         }
       } else if (force) {
-        toaster.info(
-          data.error ?? "该单集暂无可用的平台官方字幕，可使用 ASR 语音转写"
-        );
+        if (data.needLogin) {
+          toaster.warning(
+            data.notice ??
+              "该 B站视频官方 AI 字幕需要登录后解锁，请先在「偏好设置 → B站账号」扫码登录"
+          );
+        } else {
+          toaster.info(
+            data.notice ??
+              data.error ??
+              "该单集暂无可用的平台官方字幕，可使用 ASR 语音转写"
+          );
+        }
       }
     } catch {
       if (force) toaster.error("拉取官方字幕失败，请检查网络或代理设置");
@@ -1545,9 +1956,21 @@ export function ArbokApp() {
   function openEpisode(epId: string, startSec?: number) {
     const switching = currentEpId !== epId;
     const target = episodes.find((e) => e.id === epId);
+    const prevLivePos = getLivePlaybackPosition();
+    if (switching) {
+      setEpisodes((prev) =>
+        prev.map((ep) =>
+          ep.id === currentEpId ? { ...ep, positionSec: prevLivePos } : ep
+        )
+      );
+      flushEpisodePosition(currentEpId, prevLivePos);
+    }
     setMediaError(null);
     if (switching) {
       stopTtsDubbing();
+      if (pipActive && target && target.mediaType !== "video") {
+        void handleTogglePip(false);
+      }
       setActualQuality(null);
       setMaxAvailableQuality(null);
       setYtEmbedFallbackEpId(null);
@@ -1568,19 +1991,29 @@ export function ArbokApp() {
       setStreamingChatText(null);
       setTranslationProgress(null);
     }
+    const rememberedPos = switching ? (target?.positionSec ?? 0) : prevLivePos;
+    const isNearEnd =
+      target && target.durationSec > 10 && rememberedPos >= target.durationSec - 3;
     const desiredPos =
-      typeof startSec === "number" ? startSec : (target?.positionSec ?? 0);
-    pendingSeekRef.current = desiredPos;
-    lastReportedPosRef.current = desiredPos;
+      typeof startSec === "number"
+        ? startSec
+        : isNearEnd
+          ? 0
+          : rememberedPos;
+    armPendingSeek(desiredPos);
 
-    if (typeof startSec === "number") {
+    if (typeof startSec === "number" || (!switching && prevLivePos > 0)) {
+      const nextPos = Math.max(
+        0,
+        Math.min(target?.durationSec ?? desiredPos, desiredPos)
+      );
       setEpisodes((prev) =>
         prev.map((ep) =>
-          ep.id === epId
-            ? { ...ep, positionSec: Math.max(0, Math.min(ep.durationSec, startSec)) }
-            : ep
+          ep.id === epId ? { ...ep, positionSec: nextPos } : ep
         )
       );
+    }
+    if (typeof startSec === "number") {
       setIsPlaying(true);
     }
 
@@ -2510,8 +2943,15 @@ export function ArbokApp() {
   }
 
   async function handleTestTts() {
+    const activeLabel =
+      settings.ttsEngine === "local"
+        ? settings.localTtsModelId === "system-enhanced"
+          ? "系统增强语音"
+          : (localTtsModels.find((m) => m.id === settings.localTtsModelId)?.name ??
+            settings.localTtsModelId)
+        : getCloudTtsPreset(settings.cloudTtsProvider).pillLabel;
     if (!isBrowserBackendEnabled()) {
-      toaster.success("小米 MiMo TTS 试听成功（测试环境模拟）");
+      toaster.success(`${activeLabel} 试听成功（测试环境模拟）`);
       return;
     }
     try {
@@ -2549,7 +2989,7 @@ export function ArbokApp() {
       const previewAudio = new Audio(url);
       previewAudio.onended = () => URL.revokeObjectURL(url);
       await previewAudio.play();
-      toaster.success("正在播放小米 MiMo TTS 试听语音");
+      toaster.success(`正在播放 ${activeLabel} 试听语音`);
     } catch (err) {
       toaster.error(err instanceof Error ? err.message : "试听播报失败");
     }
@@ -2557,7 +2997,9 @@ export function ArbokApp() {
 
   async function handleDownloadLocalTtsModel(modelId: string) {
     if (!isBrowserBackendEnabled()) return;
-    toaster.info("开始后台拉取小米 MiMo 本地语音模型…");
+    const targetName =
+      localTtsModels.find((m) => m.id === modelId)?.name ?? modelId;
+    toaster.info(`开始后台拉取本地语音模型「${targetName}」…`);
     const res = await fetch("/api/tts/models", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2567,7 +3009,7 @@ export function ArbokApp() {
     if (res.ok && data.models) {
       setLocalTtsModels(data.models);
       persistSettingsPatch({ localTtsModelId: modelId });
-      toaster.success("本地小米 MiMo TTS 模型下载完成");
+      toaster.success(`本地语音模型「${targetName}」下载完成`);
     } else {
       toaster.error(data.error ?? "本地 TTS 模型下载失败");
     }
@@ -2583,7 +3025,7 @@ export function ArbokApp() {
     const data = await res.json();
     if (res.ok && data.models) {
       setLocalTtsModels(data.models);
-      toaster.info("已删除本地 MiMo TTS 模型");
+      toaster.info("已删除本地语音模型");
     }
   }
 
@@ -2873,6 +3315,81 @@ export function ArbokApp() {
       const decoder = new TextDecoder();
       let buffer = "";
 
+      const processSseLine = (rawLine: string) => {
+        const line = rawLine.trim();
+        if (!line.startsWith("data:")) return;
+        const payload = line.slice(5).trim();
+        if (!payload) return;
+        let ev: {
+          type: string;
+          segments?: Array<{ id: number; zh: string }>;
+          completed?: number;
+          total?: number;
+          fromCache?: boolean;
+          code?: string;
+          message?: string;
+          translatedNow?: number;
+          missingCount?: number;
+        };
+        try {
+          ev = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        if (ev.type === "batch" && ev.segments) {
+          const map = new Map(ev.segments.map((s) => [s.id, s.zh]));
+          setEpisodes((prev) =>
+            prev.map((ep) =>
+              ep.id === epId
+                ? {
+                    ...ep,
+                    isBilingual: true,
+                    transcript: ep.transcript.map((seg) =>
+                      map.has(seg.id) ? { ...seg, zh: map.get(seg.id) } : seg
+                    ),
+                  }
+                : ep
+            )
+          );
+          setTranslationProgress({
+            completed: ev.completed ?? alreadyTranslated,
+            total: ev.total ?? target.transcript.length,
+          });
+        } else if (ev.type === "done") {
+          if (Array.isArray(ev.segments) && ev.segments.length > 0) {
+            const fullSegs = ev.segments as unknown as TranscriptSegment[];
+            setEpisodes((prev) =>
+              prev.map((ep) =>
+                ep.id === epId
+                  ? { ...ep, isBilingual: true, transcript: fullSegs }
+                  : ep
+              )
+            );
+          }
+          setSubtitleMode("bilingual");
+          if ((ev.missingCount ?? 0) > 0) {
+            toaster.warning(
+              `已完成部分翻译，仍有 ${ev.missingCount} 句未译（可再次点击「翻译双语字幕」自动补齐）`
+            );
+          } else if (!opts?.isAuto || (ev.translatedNow ?? 0) > 0) {
+            toaster.success(
+              ev.translatedNow === 0
+                ? "已直接命中本地 SQLite 双语缓存（零 Token 消耗）"
+                : `双语字幕翻译完成（共补齐 ${ev.translatedNow} 句并缓存）`
+            );
+          }
+        } else if (ev.type === "error") {
+          if (ev.code === "MISSING_API_KEY" && opts?.silentMissingKey) {
+            return;
+          }
+          toaster.error(ev.message ?? "翻译失败");
+          if (ev.code === "MISSING_API_KEY") {
+            setSettingsTab("llm");
+            setSettingsDialogOpen(true);
+          }
+        }
+      };
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -2880,66 +3397,12 @@ export function ArbokApp() {
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? "";
         for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line.startsWith("data:")) continue;
-          const ev = JSON.parse(line.slice(5).trim()) as {
-            type: string;
-            segments?: Array<{ id: number; zh: string }>;
-            completed?: number;
-            total?: number;
-            fromCache?: boolean;
-            code?: string;
-            message?: string;
-            translatedNow?: number;
-          };
-          if (ev.type === "batch" && ev.segments) {
-            const map = new Map(ev.segments.map((s) => [s.id, s.zh]));
-            setEpisodes((prev) =>
-              prev.map((ep) =>
-                ep.id === epId
-                  ? {
-                      ...ep,
-                      isBilingual: true,
-                      transcript: ep.transcript.map((seg) =>
-                        map.has(seg.id) ? { ...seg, zh: map.get(seg.id) } : seg
-                      ),
-                    }
-                  : ep
-              )
-            );
-            setTranslationProgress({
-              completed: ev.completed ?? alreadyTranslated,
-              total: ev.total ?? target.transcript.length,
-            });
-          } else if (ev.type === "done") {
-            if (Array.isArray(ev.segments) && ev.segments.length > 0) {
-              const fullSegs = ev.segments as unknown as TranscriptSegment[];
-              setEpisodes((prev) =>
-                prev.map((ep) =>
-                  ep.id === epId
-                    ? { ...ep, isBilingual: true, transcript: fullSegs }
-                    : ep
-                )
-              );
-            }
-            setSubtitleMode("bilingual");
-            if (!opts?.isAuto || (ev.translatedNow ?? 0) > 0) {
-              toaster.success(
-                ev.translatedNow === 0
-                  ? "已直接命中本地 SQLite 双语缓存（零 Token 消耗）"
-                  : `双语字幕翻译完成（共补齐 ${ev.translatedNow} 句并缓存）`
-              );
-            }
-          } else if (ev.type === "error") {
-            if (ev.code === "MISSING_API_KEY" && opts?.silentMissingKey) {
-              return;
-            }
-            toaster.error(ev.message ?? "翻译失败");
-            if (ev.code === "MISSING_API_KEY") {
-              setSettingsTab("llm");
-              setSettingsDialogOpen(true);
-            }
-          }
+          processSseLine(rawLine);
+        }
+      }
+      if (buffer.trim()) {
+        for (const rawLine of buffer.split(/\r?\n/)) {
+          processSseLine(rawLine);
         }
       }
     } catch (err) {
@@ -3126,11 +3589,28 @@ export function ArbokApp() {
     );
     setStreamingChatText("");
 
+    const selectedChoice = chatModelChoice;
+    let overrideProvider: LlmProviderId | undefined;
+    let overrideModel: string | undefined;
+    if (selectedChoice && selectedChoice !== "default") {
+      const sep = selectedChoice.indexOf("::");
+      if (sep > 0) {
+        overrideProvider = selectedChoice.slice(0, sep) as LlmProviderId;
+        overrideModel = selectedChoice.slice(sep + 2) || undefined;
+      } else {
+        overrideProvider = selectedChoice as LlmProviderId;
+      }
+    }
+
     try {
       const res = await fetch(`/api/episodes/${encodeURIComponent(epId)}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: prompt }),
+        body: JSON.stringify({
+          question: prompt,
+          provider: overrideProvider,
+          model: overrideModel,
+        }),
       });
       if (!res.body) throw new Error("未收到 AI 流式响应");
       const reader = res.body.getReader();
@@ -3251,16 +3731,20 @@ export function ArbokApp() {
       list = list.filter((e) => e.positionSec > 0 && e.positionSec < e.durationSec);
     } else if (activeNav === "offline") {
       list = list.filter((e) => e.isOffline);
+    } else if (activeNav === "favorites") {
+      list = list.filter((e) => Boolean(e.isStarred));
     } else if (activeNav !== "inbox" && activeNav !== "notes") {
       list = list.filter((e) => e.subId === activeNav);
     }
 
-    if (platformFilter === "podcast") {
-      list = list.filter(
-        (e) => e.platform === "podcast" || e.platform === "xiaoyuzhou"
-      );
-    } else if (platformFilter !== "all") {
-      list = list.filter((e) => e.platform === platformFilter);
+    if (activeNav !== "favorites") {
+      if (platformFilter === "podcast") {
+        list = list.filter(
+          (e) => e.platform === "podcast" || e.platform === "xiaoyuzhou"
+        );
+      } else if (platformFilter !== "all") {
+        list = list.filter((e) => e.platform === platformFilter);
+      }
     }
 
     const q = listSearch.trim().toLowerCase();
@@ -3274,9 +3758,15 @@ export function ArbokApp() {
     return list;
   }, [episodes, activeNav, platformFilter, listSearch]);
 
+  const starredCount = useMemo(
+    () => episodes.filter((e) => Boolean(e.isStarred)).length,
+    [episodes]
+  );
+
   const currentNavTitle = useMemo(() => {
     const map: Record<string, string> = {
       inbox: "首页",
+      favorites: "首页",
       continue: "收听记录",
       notes: "收藏与笔记",
       offline: "离线下载",
@@ -3350,6 +3840,64 @@ export function ArbokApp() {
     return hits;
   }, [listSearch, remoteSearchResult, notes, episodes]);
 
+  const chatModelOptions = useMemo(() => {
+    const defaultGuideProvider =
+      settings.llmGuideProvider && settings.llmGuideProvider !== "default"
+        ? settings.llmGuideProvider
+        : settings.llmProvider;
+    const defaultPreset = getLlmPreset(defaultGuideProvider);
+    const defaultModelName =
+      defaultGuideProvider === settings.llmProvider
+        ? settings.llmModel || defaultPreset.defaultModel
+        : defaultPreset.defaultModel;
+
+    const opts: Array<{ value: string; label: string }> = [
+      {
+        value: "default",
+        label: `跟随默认（${defaultPreset.shortName} · ${defaultModelName}）`,
+      },
+    ];
+    const seen = new Set<string>(["default"]);
+
+    for (const cliId of ["claude-code", "codex", "antigravity"] as const) {
+      const status = localAiClis.find((c) => c.id === cliId);
+      const preset = getLlmPreset(cliId);
+      const cliCfg =
+        settings.localAiConfigs?.[cliId] ?? getDefaultLocalAiCliConfig(cliId);
+      const checkedModels =
+        cliCfg.chatModels.length > 0 ? cliCfg.chatModels : [preset.defaultModel];
+      const badge = status?.available ? "" : "（未安装）";
+      for (const modelId of checkedModels) {
+        const val = `${cliId}::${modelId}`;
+        if (seen.has(val)) continue;
+        seen.add(val);
+        opts.push({
+          value: val,
+          label: `${preset.shortName} · ${modelId}${badge}`,
+        });
+      }
+    }
+
+    for (const preset of LLM_PROVIDER_PRESETS) {
+      if (isLocalAiProviderId(preset.id) || preset.category === "legacy") continue;
+      const modelName =
+        preset.id === settings.llmProvider && settings.llmModel
+          ? settings.llmModel
+          : preset.defaultModel;
+      const val = `${preset.id}::${modelName}`;
+      if (seen.has(val)) continue;
+      seen.add(val);
+      const configured =
+        !preset.requiresKey || Boolean(keyStatus.llmKeys?.[preset.id]?.configured);
+      opts.push({
+        value: val,
+        label: `${preset.shortName} · ${modelName}${configured ? " ✓" : ""}`,
+      });
+    }
+
+    return opts;
+  }, [settings, localAiClis, keyStatus.llmKeys]);
+
   const currentDownloadJob = useMemo(
     () => downloadJobs.find((j) => j.episodeId === currentEpisode.id) ?? null,
     [downloadJobs, currentEpisode.id]
@@ -3409,7 +3957,7 @@ export function ArbokApp() {
         </div>
       )}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {!sidebarCollapsed && (
+        {!sidebarCollapsed && !(pipActive && pipMode === "desktop") && (
           <aside
             aria-label="主导航栏"
             className="flex w-[232px] shrink-0 flex-col border-r border-[var(--ui-border)] bg-[var(--arbok-sidebar)] backdrop-blur-xl"
@@ -3742,12 +4290,23 @@ export function ArbokApp() {
                 onStartBiliQr={handleStartBiliQr}
                 onLogoutBili={handleLogoutBili}
                 onSaveBiliCookie={async () => {
+                  const trimmed = biliCookieDraft.trim();
                   persistSettingsPatch(
-                    { biliLoggedIn: Boolean(biliCookieDraft.trim()) },
-                    { biliCookie: biliCookieDraft.trim() }
+                    { biliLoggedIn: Boolean(trimmed) },
+                    { biliCookie: trimmed }
                   );
                   setBiliCookieDraft("");
                   toaster.success("B站 SESSDATA 已加密写入系统钥匙串");
+                  if (
+                    trimmed &&
+                    currentEpisode.platform === "bilibili" &&
+                    currentEpisode.transcript.length === 0 &&
+                    !currentIsDemoPlaceholder
+                  ) {
+                    window.setTimeout(() => {
+                      void handleFetchOfficialSubtitles(currentEpisode.id, true);
+                    }, 300);
+                  }
                 }}
                 onRefreshEnv={handleRefreshEnv}
               />
@@ -3855,6 +4414,10 @@ export function ArbokApp() {
               customGuidePrompt={settings.customGuidePrompt}
               generatingGuide={generatingGuideEpId === currentEpisode.id}
               streamingChatText={streamingChatText}
+              chatModelOptions={chatModelOptions}
+              selectedChatModel={chatModelChoice}
+              onSelectChatModel={setChatModelChoice}
+              biliLoggedIn={settings.biliLoggedIn || keyStatus.biliCookieConfigured}
               sidebarCollapsed={sidebarCollapsed}
               subSearchInputRef={subSearchRef}
               onToggleSidebar={() => setSidebarCollapsed(false)}
@@ -3875,7 +4438,7 @@ export function ArbokApp() {
                 handleMediaLoadedMetadata(videoRef.current)
               }
               onVideoWaiting={() => setIsBuffering(true)}
-              onVideoCanPlay={() => setIsBuffering(false)}
+              onVideoCanPlay={() => handleMediaCanPlay(videoRef.current)}
               onVideoEnded={handleMediaEnded}
               onVideoError={handleMediaError}
               onYouTubeTimeUpdate={(sec) => {
@@ -3913,11 +4476,19 @@ export function ArbokApp() {
               onAudioOnlyChange={handleAudioOnlyChange}
               onVideoQualityChange={handleVideoQualityChange}
               onTtsDubbingChange={handleToggleTtsDubbing}
+              onToggleStarred={handleToggleStarred}
               onToggleOffline={handleToggleOffline}
+              pipActive={pipActive}
+              pipMode={pipMode}
+              docPipContainer={docPipContainer}
+              onTogglePip={handleTogglePip}
               onPauseDownload={(id) => void handleDownloadAction(id, "pause")}
               onResumeDownload={(id) => void handleDownloadAction(id, "resume")}
               onCancelDownload={(id) => void handleDownloadAction(id, "cancel")}
-              onPlayEpisode={(id) => openEpisode(id, 0)}
+              onPlayEpisode={(id) => {
+                openEpisode(id);
+                setIsPlaying(true);
+              }}
               onMoveQueueItem={handleMoveQueueItem}
               onRemoveQueueItem={handleRemoveQueueItem}
               onClearQueue={handleClearQueue}
@@ -3977,18 +4548,22 @@ export function ArbokApp() {
                   <h1 className="truncate text-[15px] font-semibold tracking-tight">
                     {currentNavTitle}
                   </h1>
-                  {activeNav === "inbox" && (
+                  {(activeNav === "inbox" || activeNav === "favorites") && (
                     <SegmentedControl
                       aria-label="按平台筛选"
-                      value={platformFilter}
+                      value={activeNav === "favorites" ? "favorites" : platformFilter}
                       onValueChange={(next) => {
-                        if (
+                        if (next === "favorites") {
+                          setActiveNav("favorites");
+                          setViewMode("list");
+                        } else if (
                           next === "all" ||
                           next === "podcast" ||
                           next === "youtube" ||
                           next === "bilibili" ||
                           next === "local"
                         ) {
+                          setActiveNav("inbox");
                           setPlatformFilter(next);
                         }
                       }}
@@ -3999,6 +4574,16 @@ export function ArbokApp() {
                       <SegmentedControlItem value="youtube">YouTube</SegmentedControlItem>
                       <SegmentedControlItem value="bilibili">B站</SegmentedControlItem>
                       <SegmentedControlItem value="local">本地</SegmentedControlItem>
+                      <SegmentedControlItem value="favorites">
+                        <span className="inline-flex items-center gap-1">
+                          <span>收藏</span>
+                          {starredCount > 0 && (
+                            <span className="tabular-nums text-[11px] opacity-75">
+                              {starredCount}
+                            </span>
+                          )}
+                        </span>
+                      </SegmentedControlItem>
                     </SegmentedControl>
                   )}
                 </div>
@@ -4036,7 +4621,19 @@ export function ArbokApp() {
               <ScrollArea className="arbok-scroll min-h-0 flex-1">
                 <ScrollAreaViewport role="region" aria-label="主内容画布">
                   <ScrollAreaContent>
-                    {activeNav === "offline" ? (
+                    {activeNav === "favorites" ? (
+                      <FavoritesView
+                        episodes={filteredEpisodes}
+                        currentEpisodeId={currentEpisode.id}
+                        isPlaying={isPlaying}
+                        onPlayEpisode={(id) => {
+                          openEpisode(id);
+                          setIsPlaying(true);
+                        }}
+                        onPlayAll={handlePlayAllFavorites}
+                        onUnstar={handleToggleStarred}
+                      />
+                    ) : activeNav === "offline" ? (
                       <OfflineQueueView
                         downloadJobs={downloadJobs}
                         offlineEpisodes={filteredEpisodes}
@@ -4215,7 +4812,10 @@ export function ArbokApp() {
           onSeek={handleSeek}
           onCycleSpeed={() => handleCycleSpeed(1)}
           onExpand={() => openEpisode(currentEpisode.id)}
-          onPlayEpisode={(id) => openEpisode(id, 0)}
+          onPlayEpisode={(id) => {
+            openEpisode(id);
+            setIsPlaying(true);
+          }}
           onMoveQueueItem={handleMoveQueueItem}
           onRemoveQueueItem={handleRemoveQueueItem}
           onClearQueue={handleClearQueue}
@@ -4254,9 +4854,10 @@ export function ArbokApp() {
         className="hidden"
         onTimeUpdate={() => handleMediaTimeUpdate(audioRef.current)}
         onLoadedMetadata={() => handleMediaLoadedMetadata(audioRef.current)}
+        onDurationChange={() => applyPendingSeek(audioRef.current)}
         onWaiting={() => setIsBuffering(true)}
-        onCanPlay={() => setIsBuffering(false)}
-        onPlaying={() => setIsBuffering(false)}
+        onCanPlay={() => handleMediaCanPlay(audioRef.current)}
+        onPlaying={() => handleMediaCanPlay(audioRef.current)}
         onEnded={handleMediaEnded}
         onError={() => {
           if (hydrated && !useVideoElement && audioStreamUrl) {

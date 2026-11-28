@@ -80,7 +80,12 @@ function getDispatcherForProxy(proxyUrl: string): Dispatcher {
   if (existing) return existing;
   const agent = proxyUrl.toLowerCase().startsWith("socks")
     ? new Socks5ProxyAgent(proxyUrl)
-    : new ProxyAgent(proxyUrl);
+    : new ProxyAgent({
+        uri: proxyUrl,
+        headersTimeout: 45_000,
+        bodyTimeout: 60_000,
+        keepAliveTimeout: 15_000,
+      });
   dispatcherCache.set(proxyUrl, agent);
   return agent;
 }

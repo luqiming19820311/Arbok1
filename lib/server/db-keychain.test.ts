@@ -14,6 +14,7 @@ import {
   saveAiGuide,
   saveAppSettings,
   saveSegmentTranslations,
+  updateEpisodeFields,
   upsertNote,
 } from "./db";
 import {
@@ -111,4 +112,21 @@ test("API keys live strictly in keychain and never leak plaintext into SQLite", 
 
   deleteSecret("llm:deepseek");
   expect(getSecret("llm:deepseek")).toBeNull();
+});
+
+test("SQLite persists episode starred (favorites) status across restarts", () => {
+  const initial = getEpisodeById("ep-yt-1")!;
+  expect(initial.isStarred).toBe(false);
+
+  updateEpisodeFields("ep-yt-1", { isStarred: true });
+  closeDbForTests();
+
+  const starredReload = getEpisodeById("ep-yt-1")!;
+  expect(starredReload.isStarred).toBe(true);
+
+  updateEpisodeFields("ep-yt-1", { isStarred: false });
+  closeDbForTests();
+
+  const unstarredReload = getEpisodeById("ep-yt-1")!;
+  expect(unstarredReload.isStarred).toBe(false);
 });

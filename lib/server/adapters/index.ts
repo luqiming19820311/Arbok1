@@ -132,7 +132,12 @@ export async function refreshSubscriptions(
 export async function fetchOfficialSubtitlesForEpisode(
   episodeId: string,
   options?: { force?: boolean; fetchImpl?: typeof fetch }
-): Promise<{ transcript: TranscriptSegment[]; description?: string }> {
+): Promise<{
+  transcript: TranscriptSegment[];
+  description?: string;
+  notice?: string;
+  needLogin?: boolean;
+}> {
   const ep = getEpisodeById(episodeId);
   if (!ep) throw new Error(`未找到单集 ${episodeId}`);
   if (!options?.force && ep.transcript.length > 0 && ep.description) {
@@ -161,6 +166,10 @@ export async function fetchOfficialSubtitlesForEpisode(
     return {
       transcript,
       description: resolved.description ?? ep.description,
+      notice:
+        resolved.transcript.length === 0
+          ? "该 YouTube 视频暂未提供可拉取的官方字幕，可使用 ASR 语音转写。"
+          : undefined,
     };
   } else if (ep.platform === "bilibili") {
     const resolved = await resolveBilibiliStream(ep.pageUrl, {
@@ -181,6 +190,8 @@ export async function fetchOfficialSubtitlesForEpisode(
     return {
       transcript,
       description: resolved.description ?? ep.description,
+      notice: resolved.subtitleNotice,
+      needLogin: resolved.needLogin,
     };
   } else if (ep.platform === "podcast" && ep.subId && (options?.force || ep.transcript.length === 0)) {
     const sub = listSubscriptions().find((s) => s.id === ep.subId);

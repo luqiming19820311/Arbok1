@@ -54,6 +54,8 @@ Second line`;
 
   const whisperJson = JSON.stringify({
     transcription: [
+      { offsets: { from: 0, to: 1000 }, text: "♪ 音乐 ♪" },
+      { offsets: { from: 1000, to: 1200 }, text: "[音乐]" },
       { offsets: { from: 1200, to: 4800 }, text: " 本地离线识别成功 " },
     ],
   });
@@ -239,4 +241,23 @@ Today we are covering The Home Depot.`;
   );
   expect(audioFile.endsWith("source.mp3")).toBe(true);
   expect(fs.statSync(audioFile).size).toBe(2048);
+
+  // Verify Bilibili CDN download attaches Referer header to prevent 403
+  let seenBiliReferer = "";
+  const biliDir = path.join(tmpDir, "bili-audio");
+  fs.mkdirSync(biliDir, { recursive: true });
+  await downloadDirectAudioFile(
+    "https://upos-sz-estgcos.bilivideo.com/upgcxcode/demo.m4s",
+    biliDir,
+    new AbortController().signal,
+    () => {},
+    (async (_url: string | URL | Request, init?: RequestInit) => {
+      seenBiliReferer = new Headers(init?.headers).get("referer") ?? "";
+      return new Response(new Uint8Array(2048).fill(3), {
+        status: 200,
+        headers: { "Content-Type": "audio/mp4" },
+      });
+    }) as typeof fetch
+  );
+  expect(seenBiliReferer).toBe("https://www.bilibili.com/");
 });

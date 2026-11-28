@@ -180,6 +180,32 @@ body {
   font-weight: 600;
 }
 
+.arbok-fav-tab[data-slot="button"] {
+  border: 1px solid var(--ui-border);
+  background: var(--arbok-surface);
+  color: var(--ui-muted-foreground);
+}
+
+.arbok-fav-tab[data-slot="button"]:hover {
+  background: var(--ui-muted);
+  color: var(--ui-foreground);
+}
+
+.arbok-fav-tab[data-slot="button"][data-active="true"] {
+  background: var(--arbok-accent-soft);
+  border-color: var(--arbok-accent-border);
+  color: var(--ui-foreground);
+  font-weight: 600;
+}
+
+.arbok-pip-drag-region {
+  -webkit-app-region: drag;
+}
+
+.arbok-pip-no-drag {
+  -webkit-app-region: no-drag;
+}
+
 .arbok-provider-row[data-slot="button"] {
   justify-content: space-between;
 }

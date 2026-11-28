@@ -1,7 +1,7 @@
 import type { UpdateCheckResult } from "@/components/arbok/types";
 import { proxyFetch } from "./proxy";
 
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.2.0";
 export const GITHUB_OWNER_URL = "https://github.com/luqiming19820311";
 export const DEFAULT_OTA_REPO = "luqiming19820311/Arbok1";
 

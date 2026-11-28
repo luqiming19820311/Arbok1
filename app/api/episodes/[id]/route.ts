@@ -22,6 +22,7 @@ export async function PATCH(
   const body = (await request.json()) as {
     positionSec?: number;
     isOffline?: boolean;
+    isStarred?: boolean;
     localFilePath?: string;
   };
   updateEpisodeFields(id, body);

@@ -14,8 +14,23 @@ import { detectLanguageFromText, formatRelativeDate } from "./podcast";
 const BILI_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-function getBiliHeaders(): Record<string, string> {
-  const cookie = getSecret("auth:bilibili");
+const WBI_MIXIN_KEY_ENC_TAB = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+  33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61,
+  26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36,
+  20, 34, 44, 52,
+];
+
+let cachedWbiKeys: {
+  imgKey: string;
+  subKey: string;
+  isLogin: boolean;
+  fetchedAt: number;
+  cookieFingerprint: string;
+} | null = null;
+
+export function getBiliHeaders(includeCookie = true): Record<string, string> {
+  const cookie = includeCookie ? getSecret("auth:bilibili") : null;
   const headers: Record<string, string> = {
     "User-Agent": BILI_UA,
     Referer: "https://www.bilibili.com/",
@@ -25,6 +40,85 @@ function getBiliHeaders(): Record<string, string> {
     headers.Cookie = cookie.includes("SESSDATA=") ? cookie : `SESSDATA=${cookie}`;
   }
   return headers;
+}
+
+function getWbiMixinKey(orig: string): string {
+  return WBI_MIXIN_KEY_ENC_TAB.map((idx) => orig[idx] ?? "")
+    .join("")
+    .slice(0, 32);
+}
+
+export function encodeBiliWbiQuery(
+  params: Record<string, string | number>,
+  imgKey: string,
+  subKey: string,
+  wts = Math.floor(Date.now() / 1000)
+): string {
+  const mixinKey = getWbiMixinKey(imgKey + subKey);
+  const allParams: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) {
+    allParams[k] = String(v).replace(/[!'()*]/g, "");
+  }
+  allParams.wts = String(wts);
+
+  const query = Object.keys(allParams)
+    .sort()
+    .map(
+      (k) => `${encodeURIComponent(k)}=${encodeURIComponent(allParams[k])}`
+    )
+    .join("&");
+  const wRid = crypto
+    .createHash("md5")
+    .update(query + mixinKey)
+    .digest("hex");
+  return `${query}&w_rid=${wRid}`;
+}
+
+async function fetchBiliWbiKeys(
+  fetchImpl: typeof fetch
+): Promise<{ imgKey: string; subKey: string; isLogin: boolean } | null> {
+  const cookie = getSecret("auth:bilibili") ?? "";
+  const fp = crypto.createHash("sha1").update(cookie).digest("hex");
+  if (
+    cachedWbiKeys &&
+    cachedWbiKeys.cookieFingerprint === fp &&
+    Date.now() - cachedWbiKeys.fetchedAt < 20 * 60 * 1000
+  ) {
+    return {
+      imgKey: cachedWbiKeys.imgKey,
+      subKey: cachedWbiKeys.subKey,
+      isLogin: cachedWbiKeys.isLogin,
+    };
+  }
+
+  try {
+    const res = await fetchImpl("https://api.bilibili.com/x/web-interface/nav", {
+      headers: getBiliHeaders(),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      data?: {
+        isLogin?: boolean;
+        wbi_img?: { img_url?: string; sub_url?: string };
+      };
+    };
+    const imgUrl = json.data?.wbi_img?.img_url ?? "";
+    const subUrl = json.data?.wbi_img?.sub_url ?? "";
+    const imgKey = imgUrl.split("/").pop()?.split(".")[0] ?? "";
+    const subKey = subUrl.split("/").pop()?.split(".")[0] ?? "";
+    if (!imgKey || !subKey) return null;
+
+    cachedWbiKeys = {
+      imgKey,
+      subKey,
+      isLogin: Boolean(json.data?.isLogin),
+      fetchedAt: Date.now(),
+      cookieFingerprint: fp,
+    };
+    return { imgKey, subKey, isLogin: Boolean(json.data?.isLogin) };
+  } catch {
+    return null;
+  }
 }
 
 export async function generateBilibiliQr(fetchImpl: typeof fetch = fetch): Promise<{
@@ -88,26 +182,63 @@ export async function pollBilibiliQr(
     return { status: "expired", message: "二维码已过期，请重新获取" };
   }
   if (innerCode === 0) {
-    const cookieParts: string[] = [];
+    const cookieMap = new Map<string, string>();
+    const allowedCookieRe =
+      /^(SESSDATA|bili_jct|DedeUserID|DedeUserID__ckMd5|sid|buvid3|buvid4)=/;
     const setCookies =
       typeof res.headers.getSetCookie === "function"
         ? res.headers.getSetCookie()
         : [];
     for (const raw of setCookies) {
       const kv = raw.split(";")[0]?.trim();
-      if (kv && /^(SESSDATA|bili_jct|DedeUserID)=/.test(kv)) {
-        cookieParts.push(kv);
+      if (kv && allowedCookieRe.test(kv)) {
+        const eqIdx = kv.indexOf("=");
+        cookieMap.set(kv.slice(0, eqIdx), kv);
       }
     }
-    if (cookieParts.length === 0 && payload.data?.url) {
-      const parsed = new URL(payload.data.url);
-      for (const key of ["SESSDATA", "bili_jct", "DedeUserID"]) {
-        const val = parsed.searchParams.get(key);
-        if (val) cookieParts.push(`${key}=${val}`);
+    if (payload.data?.url) {
+      try {
+        const parsed = new URL(payload.data.url);
+        for (const key of [
+          "SESSDATA",
+          "bili_jct",
+          "DedeUserID",
+          "DedeUserID__ckMd5",
+        ]) {
+          const val = parsed.searchParams.get(key);
+          if (val && !cookieMap.has(key)) {
+            cookieMap.set(key, `${key}=${val}`);
+          }
+        }
+      } catch {
+        // Ignore malformed redirect URL.
       }
     }
+    if (!cookieMap.has("buvid3")) {
+      try {
+        const spiRes = await fetchImpl(
+          "https://api.bilibili.com/x/frontend/finger/spi",
+          { headers: { "User-Agent": BILI_UA, Referer: "https://www.bilibili.com/" } }
+        );
+        if (spiRes.ok) {
+          const spiJson = (await spiRes.json()) as {
+            data?: { b_3?: string; b_4?: string };
+          };
+          if (spiJson.data?.b_3) {
+            cookieMap.set("buvid3", `buvid3=${spiJson.data.b_3}`);
+          }
+          if (spiJson.data?.b_4) {
+            cookieMap.set("buvid4", `buvid4=${spiJson.data.b_4}`);
+          }
+        }
+      } catch {
+        // Optional buvid enrichment.
+      }
+    }
+    const cookieParts = [...cookieMap.values()];
     if (cookieParts.length > 0) {
       setSecret("auth:bilibili", cookieParts.join("; "));
+      cachedWbiKeys = null;
     }
     return { status: "confirmed", message: "B站扫码登录成功，凭证已写入 macOS Keychain" };
   }
@@ -166,40 +297,126 @@ export function parseBccSubtitles(raw: string): TranscriptSegment[] {
     }));
 }
 
+export interface BilibiliSubtitleFetchResult {
+  segments: TranscriptSegment[];
+  needLogin: boolean;
+  notice?: string;
+}
+
+export async function fetchBilibiliOfficialSubtitlesDetailed(
+  bvid: string,
+  cid: number,
+  fetchImpl: typeof fetch = fetch,
+  aid?: number
+): Promise<BilibiliSubtitleFetchResult> {
+  const hasCookie = Boolean(getSecret("auth:bilibili"));
+  const wbiKeys = await fetchBiliWbiKeys(fetchImpl);
+  const candidateEndpoints: string[] = [];
+
+  if (wbiKeys) {
+    const wbiParams: Record<string, string | number> = { bvid, cid };
+    if (aid) wbiParams.aid = aid;
+    const signedQuery = encodeBiliWbiQuery(
+      wbiParams,
+      wbiKeys.imgKey,
+      wbiKeys.subKey
+    );
+    candidateEndpoints.push(
+      `https://api.bilibili.com/x/player/wbi/v2?${signedQuery}`
+    );
+  }
+  candidateEndpoints.push(
+    `https://api.bilibili.com/x/player/v2?bvid=${encodeURIComponent(bvid)}&cid=${cid}`
+  );
+
+  let sawNeedLogin = false;
+  for (const endpoint of candidateEndpoints) {
+    try {
+      const res = await fetchImpl(endpoint, { headers: getBiliHeaders() });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        code?: number;
+        data?: {
+          need_login_subtitle?: boolean;
+          login_mid?: number;
+          subtitle?: {
+            subtitles?: Array<{ lan?: string; subtitle_url?: string }>;
+          };
+        };
+      };
+      if (data.code && data.code !== 0) continue;
+      if (data.data?.need_login_subtitle) {
+        sawNeedLogin = true;
+      }
+      const list = data.data?.subtitle?.subtitles ?? [];
+      if (list.length === 0) continue;
+
+      const withUrl = list.filter((s) => Boolean(s.subtitle_url?.trim()));
+      if (withUrl.length === 0) {
+        sawNeedLogin = true;
+        continue;
+      }
+
+      const preferred =
+        withUrl.find((s) => /^zh(?:-|$)/i.test(s.lan ?? "")) ??
+        withUrl.find((s) => s.lan?.startsWith("ai-zh")) ??
+        withUrl.find((s) => /^(?:en|ai-en)/i.test(s.lan ?? "")) ??
+        withUrl[0];
+      if (!preferred?.subtitle_url) continue;
+
+      const subUrl = preferred.subtitle_url.startsWith("//")
+        ? `https:${preferred.subtitle_url}`
+        : preferred.subtitle_url;
+      const subRes = await fetchImpl(subUrl, {
+        headers: getBiliHeaders(false),
+      });
+      if (!subRes.ok) continue;
+      const segments = parseBccSubtitles(await subRes.text());
+      if (segments.length > 0) {
+        return { segments, needLogin: false };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (wbiKeys && hasCookie && !wbiKeys.isLogin) {
+    return {
+      segments: [],
+      needLogin: true,
+      notice:
+        "B站登录态已过期，请在「偏好设置 → B站账号」重新扫码登录后再拉取官方 AI 字幕。",
+    };
+  }
+  if (!hasCookie || sawNeedLogin) {
+    return {
+      segments: [],
+      needLogin: true,
+      notice: hasCookie
+        ? "当前 B站登录态未能解锁该视频字幕（可能 Cookie 已失效，请重新扫码登录；或该视频无官方字幕，可直接使用 ASR 转写）。"
+        : "B站官方 AI 字幕需要登录后获取，请先在「偏好设置 → B站账号」扫码登录。",
+    };
+  }
+  return {
+    segments: [],
+    needLogin: false,
+    notice: "该 B站视频未提供官方/AI 字幕，请点击「开始转写字幕」使用 ASR 语音转写。",
+  };
+}
+
 export async function fetchBilibiliOfficialSubtitles(
   bvid: string,
   cid: number,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  aid?: number
 ): Promise<TranscriptSegment[]> {
-  try {
-    const res = await fetchImpl(
-      `https://api.bilibili.com/x/player/v2?bvid=${encodeURIComponent(bvid)}&cid=${cid}`,
-      { headers: getBiliHeaders() }
-    );
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
-      data?: {
-        subtitle?: {
-          subtitles?: Array<{ lan?: string; subtitle_url?: string }>;
-        };
-      };
-    };
-    const list = data.data?.subtitle?.subtitles ?? [];
-    if (list.length === 0) return [];
-    const preferred =
-      list.find((s) => s.lan?.startsWith("zh")) ??
-      list.find((s) => s.lan?.startsWith("ai-zh")) ??
-      list[0];
-    if (!preferred?.subtitle_url) return [];
-    const subUrl = preferred.subtitle_url.startsWith("//")
-      ? `https:${preferred.subtitle_url}`
-      : preferred.subtitle_url;
-    const subRes = await fetchImpl(subUrl, { headers: getBiliHeaders() });
-    if (!subRes.ok) return [];
-    return parseBccSubtitles(await subRes.text());
-  } catch {
-    return [];
-  }
+  const res = await fetchBilibiliOfficialSubtitlesDetailed(
+    bvid,
+    cid,
+    fetchImpl,
+    aid
+  );
+  return res.segments;
 }
 
 function qualityToBiliQn(quality?: string): { qn: number; fourk: number } {
@@ -232,6 +449,8 @@ export async function resolveBilibiliStream(
   videoUrl?: string;
   audioUrl?: string;
   transcript: TranscriptSegment[];
+  subtitleNotice?: string;
+  needLogin?: boolean;
   streamExpiresAt: number;
 }> {
   const doFetch = options?.fetchImpl ?? fetch;
@@ -239,6 +458,15 @@ export async function resolveBilibiliStream(
   const bvid = extractBvid(expandedUrl);
   if (!bvid) {
     throw new Error("未在链接中识别到 B站 BV 号");
+  }
+
+  let requestedPage = 1;
+  try {
+    const parsedUrl = new URL(expandedUrl);
+    const pVal = Number(parsedUrl.searchParams.get("p") ?? "1");
+    if (Number.isFinite(pVal) && pVal >= 1) requestedPage = Math.floor(pVal);
+  } catch {
+    requestedPage = 1;
   }
 
   const viewRes = await doFetch(
@@ -252,6 +480,7 @@ export async function resolveBilibiliStream(
     code: number;
     message?: string;
     data?: {
+      aid?: number;
       bvid: string;
       cid: number;
       title: string;
@@ -260,12 +489,19 @@ export async function resolveBilibiliStream(
       duration: number;
       pubdate: number;
       owner?: { name?: string };
+      pages?: Array<{ page?: number; cid?: number; duration?: number }>;
     };
   };
   if (viewJson.code !== 0 || !viewJson.data) {
     throw new Error(viewJson.message ?? "B站视频不存在或不可访问");
   }
   const v = viewJson.data;
+  const matchedPage =
+    requestedPage > 1
+      ? v.pages?.find((p) => p.page === requestedPage)
+      : undefined;
+  const effectiveCid = matchedPage?.cid ?? v.cid;
+  const effectiveDuration = matchedPage?.duration || v.duration || 300;
   const coverUrl = v.pic?.startsWith("http://")
     ? v.pic.replace("http://", "https://")
     : v.pic;
@@ -275,7 +511,7 @@ export async function resolveBilibiliStream(
 
   const { qn, fourk } = qualityToBiliQn(options?.quality);
   const mp4Res = await doFetch(
-    `https://api.bilibili.com/x/player/playurl?bvid=${encodeURIComponent(v.bvid)}&cid=${v.cid}&qn=${qn}&fnval=1&fourk=${fourk}&platform=html5&high_quality=1`,
+    `https://api.bilibili.com/x/player/playurl?bvid=${encodeURIComponent(v.bvid)}&cid=${effectiveCid}&qn=${qn}&fnval=1&fourk=${fourk}&platform=html5&high_quality=1`,
     { headers: getBiliHeaders() }
   );
   if (mp4Res.ok) {
@@ -287,7 +523,7 @@ export async function resolveBilibiliStream(
   }
 
   const dashRes = await doFetch(
-    `https://api.bilibili.com/x/player/playurl?bvid=${encodeURIComponent(v.bvid)}&cid=${v.cid}&qn=80&fnval=16`,
+    `https://api.bilibili.com/x/player/playurl?bvid=${encodeURIComponent(v.bvid)}&cid=${effectiveCid}&qn=80&fnval=16`,
     { headers: getBiliHeaders() }
   );
   if (dashRes.ok) {
@@ -331,23 +567,30 @@ export async function resolveBilibiliStream(
     }
   }
 
-  const transcript =
+  const subRes =
     options?.fetchSubtitles !== false
-      ? await fetchBilibiliOfficialSubtitles(v.bvid, v.cid, doFetch)
-      : [];
+      ? await fetchBilibiliOfficialSubtitlesDetailed(
+          v.bvid,
+          effectiveCid,
+          doFetch,
+          v.aid
+        )
+      : { segments: [], needLogin: false };
 
   return {
     bvid: v.bvid,
-    cid: v.cid,
+    cid: effectiveCid,
     title: v.title,
     description: v.desc?.trim() || undefined,
     channel: v.owner?.name ?? "B站 UP主",
     coverUrl,
-    durationSec: v.duration || 300,
+    durationSec: effectiveDuration,
     pubdate: v.pubdate,
     videoUrl,
     audioUrl: audioUrl ?? videoUrl,
-    transcript,
+    transcript: subRes.segments,
+    subtitleNotice: subRes.notice,
+    needLogin: subRes.needLogin,
     streamExpiresAt: Date.now() + 90 * 60 * 1000,
   };
 }

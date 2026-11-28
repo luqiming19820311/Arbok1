@@ -5,6 +5,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ingestUrl, refreshSubscriptions } from "./adapters";
 import {
+  encodeBiliWbiQuery,
+  fetchBilibiliOfficialSubtitlesDetailed,
   generateBilibiliQr,
   parseBccSubtitles,
   pollBilibiliQr,
@@ -421,6 +423,75 @@ Today we discuss Range-based local media proxies.`;
     const poll = await pollBilibiliQr("abc123", qrFetch);
     expect(poll.status).toBe("confirmed");
     expect(getSecret("auth:bilibili")).toContain("SESSDATA=live_sess_999");
+
+    // Verify WBI query signing and WBI /x/player/wbi/v2 official AI subtitle fetch
+    const wbiQuery = encodeBiliWbiQuery(
+      { bvid: "BV1Test123456", cid: 1001 },
+      "7cd084941338484aae1ad9425b84077c",
+      "4932caff0ff746eab6f01bf08b70ac45",
+      1700000000
+    );
+    expect(wbiQuery).toContain("wts=1700000000");
+    expect(wbiQuery).toMatch(/w_rid=[a-f0-9]{32}$/);
+
+    const seenSubUrls: string[] = [];
+    const wbiSubFetch: typeof fetch = async (input) => {
+      const u = String(input);
+      seenSubUrls.push(u);
+      if (u.includes("/x/web-interface/nav")) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: {
+              isLogin: true,
+              wbi_img: {
+                img_url:
+                  "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                sub_url:
+                  "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.includes("/x/player/wbi/v2")) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: {
+              subtitle: {
+                subtitles: [
+                  {
+                    lan: "ai-zh",
+                    subtitle_url: "//aisubtitle.hdslb.com/bfs/ai_subtitle/demo.json",
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.includes("aisubtitle.hdslb.com")) {
+        return new Response(
+          JSON.stringify({
+            body: [{ from: 1.0, to: 5.0, content: "成功通过 WBI 解锁 B站官方 AI 字幕" }],
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("Not Found", { status: 404 });
+    };
+
+    const subResult = await fetchBilibiliOfficialSubtitlesDetailed(
+      "BV1Test123456",
+      1001,
+      wbiSubFetch
+    );
+    expect(seenSubUrls.some((u) => u.includes("/x/player/wbi/v2") && u.includes("w_rid="))).toBe(true);
+    expect(subResult.segments).toHaveLength(1);
+    expect(subResult.segments[0].orig).toBe("成功通过 WBI 解锁 B站官方 AI 字幕");
   });
 
   test("normalizes YouTube channel URLs to /videos and merges full json3 captions without truncation", () => {

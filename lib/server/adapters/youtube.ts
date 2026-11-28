@@ -245,7 +245,12 @@ async function fetchBestYouTubeSubtitle(
         tracks[0];
       if (!track?.url) continue;
       try {
-        const res = await fetchImpl(track.url);
+        const res = await fetchImpl(track.url, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          },
+        });
         if (!res.ok) continue;
         const text = await res.text();
         const segs =
@@ -360,10 +365,29 @@ export async function resolveYouTubeStreamAndSubtitles(
     streams = pickStreamsFromFormats(info.formats, options?.quality);
   }
 
-  const subResult =
+  let subResult =
     options?.fetchSubtitles !== false
       ? await fetchBestYouTubeSubtitle(info, options?.fetchImpl ?? proxyFetch)
       : { segments: [], language: detectLanguageFromText(info.title ?? "") };
+
+  if (options?.fetchSubtitles !== false && subResult.segments.length === 0) {
+    try {
+      const { stdout } = await runIsolatedSubprocess(ytdlp, [
+        ...baseArgs,
+        videoUrl,
+      ]);
+      const webInfo = JSON.parse(stdout) as YtDlpVideoInfo;
+      const webSubs = await fetchBestYouTubeSubtitle(
+        webInfo,
+        options?.fetchImpl ?? proxyFetch
+      );
+      if (webSubs.segments.length > 0) {
+        subResult = webSubs;
+      }
+    } catch {
+      // Keep empty result if web fallback also fails.
+    }
+  }
 
   return {
     videoUrl: streams.videoUrl ?? info.url,

@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import type { LlmProviderId } from "@/components/arbok/types";
 import { clearChatMessages } from "@/lib/server/db";
 import { MissingApiKeyError, streamEpisodeChat } from "@/lib/server/llm";
 
@@ -9,6 +10,8 @@ export async function POST(
   const { id } = await context.params;
   const body = (await request.json().catch(() => ({}))) as {
     question?: string;
+    provider?: LlmProviderId | "default";
+    model?: string;
   };
   const question = body.question?.trim();
   if (!question) {
@@ -29,7 +32,14 @@ export async function POST(
           id,
           question,
           (delta) => send({ type: "delta", delta }),
-          { signal: request.signal }
+          {
+            provider:
+              body.provider && body.provider !== "default"
+                ? body.provider
+                : undefined,
+            model: body.model?.trim() || undefined,
+            signal: request.signal,
+          }
         );
         send({
           type: "done",
