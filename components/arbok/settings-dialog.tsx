@@ -86,7 +86,7 @@ import {
   Volume2Icon,
   XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CLOUD_ASR_PRESETS,
   CLOUD_TTS_PRESETS,
@@ -297,29 +297,122 @@ export function SettingsDialog({
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateCheckResult, setUpdateCheckResult] =
     useState<UpdateCheckResult | null>(null);
+  const [desktopUpdate, setDesktopUpdate] = useState<{
+    status:
+      | "idle"
+      | "checking"
+      | "available"
+      | "downloading"
+      | "downloaded"
+      | "installing"
+      | "up-to-date"
+      | "error";
+    currentVersion?: string;
+    latestVersion?: string | null;
+    downloadUrl?: string | null;
+    releaseUrl?: string | null;
+    percent?: number;
+    transferredBytes?: number;
+    totalBytes?: number;
+    message?: string;
+  } | null>(null);
+
+  type ArbokDesktopBridge = {
+    isDesktop?: boolean;
+    getUpdateState?: () => Promise<NonNullable<typeof desktopUpdate>>;
+    checkForUpdates?: (repo?: string) => Promise<NonNullable<typeof desktopUpdate>>;
+    downloadUpdate?: () => Promise<NonNullable<typeof desktopUpdate>>;
+    setAutoDownload?: (enabled: boolean) => Promise<boolean>;
+    quitAndInstall?: () => Promise<{ ok: boolean; error?: string }>;
+    onUpdateEvent?: (
+      listener: (payload: NonNullable<typeof desktopUpdate>) => void
+    ) => () => void;
+  };
+
+  function getDesktopBridge(): ArbokDesktopBridge | undefined {
+    if (typeof window === "undefined") return undefined;
+    return (window as unknown as { arbokDesktop?: ArbokDesktopBridge })
+      .arbokDesktop;
+  }
+
+  useEffect(() => {
+    const bridge = getDesktopBridge();
+    if (!bridge?.isDesktop) return;
+    void bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
+    void bridge
+      .getUpdateState?.()
+      .then((state) => {
+        if (state && state.status !== "idle") {
+          setDesktopUpdate(state);
+        }
+      })
+      .catch(() => {});
+    const unsubscribe = bridge.onUpdateEvent?.((payload) => {
+      setDesktopUpdate(payload);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, [settings.autoDownloadUpdates]);
 
   async function handleCheckUpdates() {
     setCheckingUpdate(true);
+    const repo = settings.otaRepo || "luqiming19820311/Arbok1";
+    const bridge = getDesktopBridge();
+    if (bridge?.isDesktop && bridge.checkForUpdates) {
+      try {
+        await bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
+        const state = await bridge.checkForUpdates(repo);
+        if (state) setDesktopUpdate(state);
+      } catch {
+        setDesktopUpdate({
+          status: "error",
+          message: "检查更新失败，请检查网络连接或代理设置",
+        });
+      } finally {
+        setCheckingUpdate(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch("/api/updates/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          repo: settings.otaRepo || "luqiming19820311/Arbok1",
-        }),
+        body: JSON.stringify({ repo }),
       });
       const data = (await res.json()) as UpdateCheckResult;
       setUpdateCheckResult(data);
     } catch {
       setUpdateCheckResult({
         status: "up-to-date",
-        currentVersion: "0.2.0",
-        latestVersion: "0.2.0",
-        repo: settings.otaRepo || "luqiming19820311/Arbok1",
+        currentVersion: "0.2.1",
+        latestVersion: "0.2.1",
+        repo,
         message: "已经是最新版本",
       });
     } finally {
       setCheckingUpdate(false);
+    }
+  }
+
+  async function handleDownloadDesktopUpdate() {
+    const bridge = getDesktopBridge();
+    if (!bridge?.downloadUpdate) return;
+    const state = await bridge.downloadUpdate();
+    if (state) setDesktopUpdate(state);
+  }
+
+  async function handleInstallDesktopUpdate() {
+    const bridge = getDesktopBridge();
+    if (!bridge?.quitAndInstall) return;
+    const res = await bridge.quitAndInstall();
+    if (res && !res.ok && res.error) {
+      setDesktopUpdate((prev) => ({
+        ...(prev ?? { status: "error" }),
+        status: "error",
+        message: res.error,
+      }));
     }
   }
 
@@ -3005,15 +3098,37 @@ export function SettingsDialog({
                 ? repoSlug.replace(/\/+$/, "")
                 : `https://github.com/${repoSlug}`;
               const ownerUrl = "https://github.com/luqiming19820311";
-              const updateStatusColor =
-                updateCheckResult?.status === "error"
-                  ? "var(--ui-destructive)"
-                  : updateCheckResult?.status === "update-available"
+              const isDesktop = Boolean(getDesktopBridge()?.isDesktop);
+              const isDownloadingUpdate = desktopUpdate?.status === "downloading";
+              const isDownloadedUpdate = desktopUpdate?.status === "downloaded";
+              const isInstallingUpdate = desktopUpdate?.status === "installing";
+              const isAvailableDesktop = desktopUpdate?.status === "available";
+              const activeError =
+                desktopUpdate?.status === "error" ||
+                updateCheckResult?.status === "error";
+              const activeAvailable =
+                isAvailableDesktop ||
+                isDownloadingUpdate ||
+                isInstallingUpdate ||
+                updateCheckResult?.status === "update-available";
+              const updateStatusColor = activeError
+                ? "var(--ui-destructive)"
+                : isDownloadedUpdate
+                  ? "var(--status-ok-fg)"
+                  : activeAvailable
                     ? "var(--arbok-accent-text)"
                     : "var(--status-ok-fg)";
               const updateStatusText = checkingUpdate
                 ? "正在检查 GitHub Releases 更新…"
-                : updateCheckResult?.message ?? "已经是最新版本";
+                : desktopUpdate && desktopUpdate.status !== "idle"
+                  ? desktopUpdate.message || "已经是最新版本"
+                  : updateCheckResult?.message ?? "已经是最新版本";
+              const transferredMb = desktopUpdate?.transferredBytes
+                ? (desktopUpdate.transferredBytes / (1024 * 1024)).toFixed(1)
+                : null;
+              const totalMb = desktopUpdate?.totalBytes
+                ? (desktopUpdate.totalBytes / (1024 * 1024)).toFixed(1)
+                : null;
 
               return (
                 <div className="flex flex-col gap-4">
@@ -3027,7 +3142,7 @@ export function SettingsDialog({
                           Arbok
                         </span>
                         <span className="tabular-nums text-xs text-[var(--ui-muted-foreground)]">
-                          版本 V0.2.0
+                          版本 V0.2.1
                         </span>
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
@@ -3039,7 +3154,26 @@ export function SettingsDialog({
                         style={{ color: updateStatusColor }}
                       >
                         <span>{updateStatusText}</span>
-                        {updateCheckResult?.status === "update-available" &&
+                        {isDesktop && isAvailableDesktop && (
+                          <Button
+                            data-variant="solid"
+                            className="h-6 px-2.5 text-[11px]"
+                            onClick={() => void handleDownloadDesktopUpdate()}
+                          >
+                            立即下载 V{desktopUpdate?.latestVersion}
+                          </Button>
+                        )}
+                        {isDesktop && isDownloadedUpdate && (
+                          <Button
+                            data-variant="solid"
+                            className="h-6 px-2.5 text-[11px]"
+                            onClick={() => void handleInstallDesktopUpdate()}
+                          >
+                            立即重启并安装 V{desktopUpdate?.latestVersion}
+                          </Button>
+                        )}
+                        {!isDesktop &&
+                          updateCheckResult?.status === "update-available" &&
                           updateCheckResult.downloadUrl && (
                             <a
                               href={updateCheckResult.downloadUrl}
@@ -3051,15 +3185,50 @@ export function SettingsDialog({
                               <ExternalLinkIcon className="size-3" aria-hidden="true" />
                             </a>
                           )}
+                        {isDesktop &&
+                          desktopUpdate?.status === "error" &&
+                          desktopUpdate.downloadUrl && (
+                            <a
+                              href={desktopUpdate.downloadUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 underline underline-offset-2"
+                            >
+                              <span>手动下载安装包</span>
+                              <ExternalLinkIcon className="size-3" aria-hidden="true" />
+                            </a>
+                          )}
                       </div>
+                      {isDownloadingUpdate && (
+                        <div className="mt-2 max-w-md">
+                          <Progress
+                            value={desktopUpdate?.percent ?? 0}
+                            className="arbok-compact-progress"
+                          >
+                            <div className="flex items-center justify-between text-[11px] text-[var(--ui-muted-foreground)]">
+                              <ProgressLabel>
+                                {transferredMb && totalMb
+                                  ? `已下载 ${transferredMb} MB / ${totalMb} MB`
+                                  : "正在后台下载安装包…"}
+                              </ProgressLabel>
+                              <ProgressValue className="tabular-nums" />
+                            </div>
+                            <ProgressTrack>
+                              <ProgressIndicator />
+                            </ProgressTrack>
+                          </Progress>
+                        </div>
+                      )}
                       <label className="mt-2.5 inline-flex cursor-pointer items-center gap-2 text-xs text-[var(--ui-foreground)] select-none">
                         <Checkbox
                           checked={settings.autoDownloadUpdates ?? true}
-                          onCheckedChange={(next) =>
+                          onCheckedChange={(next) => {
+                            const enabled = next === true;
                             onUpdateSettings({
-                              autoDownloadUpdates: next === true,
-                            })
-                          }
+                              autoDownloadUpdates: enabled,
+                            });
+                            void getDesktopBridge()?.setAutoDownload?.(enabled);
+                          }}
                           className="arbok-cli-checkbox"
                         >
                           <CheckboxIndicator>
@@ -3073,15 +3242,15 @@ export function SettingsDialog({
 
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
-                      disabled={checkingUpdate}
+                      disabled={checkingUpdate || isDownloadingUpdate || isInstallingUpdate}
                       className="h-8 gap-1.5 rounded-lg bg-[var(--ui-muted)] px-3 text-xs"
                       onClick={() => void handleCheckUpdates()}
                     >
                       <RefreshCwIcon
-                        className={`size-3.5 ${checkingUpdate ? "animate-spin" : ""}`}
+                        className={`size-3.5 ${checkingUpdate || isDownloadingUpdate ? "animate-spin" : ""}`}
                         aria-hidden="true"
                       />
-                      <span>检查更新</span>
+                      <span>{isDownloadingUpdate ? "正在下载更新…" : "检查更新"}</span>
                     </Button>
                     <a
                       href={`${repoUrl}/issues`}
@@ -3120,7 +3289,7 @@ export function SettingsDialog({
                           GitHub OTA 自动升级源
                         </div>
                         <div className="tabular-nums mt-0.5 truncate text-xs text-[var(--ui-muted-foreground)]">
-                          {repoUrl.replace(/^https?:\/\//i, "")} · SemVer 语义化版本（V0.1.0 起步）
+                          {repoUrl.replace(/^https?:\/\//i, "")} · 自动检测并静默下载更新
                         </div>
                       </div>
                     </div>
@@ -3135,52 +3304,25 @@ export function SettingsDialog({
                     </a>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                    <div className="flex flex-col justify-between gap-2.5 rounded-xl border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-4">
-                      <div>
-                        <div className="text-[13px] font-semibold text-[var(--ui-foreground)]">
-                          OTA 仓库与版本规则
-                        </div>
-                        <p className="mt-1 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
-                          遵循 SemVer（v主.次.修）：修复升修订号（V0.1.1），新功能升次版本（V0.2.0），正式发布升 V1.0.0。
-                        </p>
+                  <div className="flex items-center gap-4 rounded-xl border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-4">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/wechat-qr.png"
+                      alt="微信扫码赞赏与联系作者"
+                      className="size-24 shrink-0 rounded-xl border border-[var(--ui-border)] bg-white p-1 object-contain"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-[13.5px] font-semibold text-[var(--ui-foreground)]">
+                        请我喝杯咖啡
                       </div>
-                      <Field name="otaRepo">
-                        <FieldLabel className="text-[11px] text-[var(--ui-muted-foreground)]">
-                          GitHub Releases 仓库
-                        </FieldLabel>
-                        <Input
-                          aria-label="GitHub OTA 仓库地址"
-                          className="tabular-nums h-8 text-xs"
-                          value={settings.otaRepo ?? "luqiming19820311/Arbok1"}
-                          onValueChange={(next) =>
-                            onUpdateSettings({ otaRepo: next })
-                          }
-                          placeholder="luqiming19820311/Arbok1"
-                        />
-                      </Field>
-                    </div>
-
-                    <div className="flex items-center gap-3.5 rounded-xl border border-[var(--ui-border)] bg-[var(--arbok-surface)] p-4">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src="/wechat-qr.png"
-                        alt="微信扫码赞赏与联系作者"
-                        className="size-24 shrink-0 rounded-xl border border-[var(--ui-border)] bg-white p-1 object-contain"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-[13.5px] font-semibold text-[var(--ui-foreground)]">
-                          请我喝杯咖啡
-                        </div>
-                        <p className="mt-1 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
-                          微信扫码赞赏与反馈交流
-                        </p>
-                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-[var(--ui-muted-foreground)]">
+                        微信扫码赞赏与反馈交流
+                      </p>
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-border)] pt-3 text-[11px] text-[var(--ui-muted-foreground)]">
-                    <span>Arbok V0.2.0 · 本地优先 · 数据与凭据均存本机</span>
+                    <span>Arbok V0.2.1 · 本地优先 · 数据与凭据均存本机</span>
                     <span>GitHub Releases OTA · luqiming19820311</span>
                   </div>
                 </div>

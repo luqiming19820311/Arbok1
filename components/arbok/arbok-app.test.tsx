@@ -257,7 +257,7 @@ test("manage subscriptions dialog supports custom folders, moving channels, and 
   expect(screen.getByRole("button", { name: "收起分类 科技类" })).toBeTruthy();
 });
 
-test("supports Follow System theme mode and About tab with V0.2.0 OTA panel", async () => {
+test("supports Follow System theme mode and About tab with V0.2.1 OTA panel without OTA rules card", async () => {
   const user = userEvent.setup();
   render(<ArbokApp />);
 
@@ -269,7 +269,7 @@ test("supports Follow System theme mode and About tab with V0.2.0 OTA panel", as
   expect(followSystemBtn.getAttribute("aria-checked")).toBe("true");
 
   await user.click(screen.getByRole("tab", { name: "关于" }));
-  expect(screen.getByText(/版本 V0\.2\.0/)).toBeTruthy();
+  expect(screen.getByText(/版本 V0\.2\.1/)).toBeTruthy();
   expect(
     screen.getByText(
       /支持 YouTube、哔哩哔哩、播客，配中文字幕、翻译和播报、AI 导读、AI 问答、笔记等功能。/
@@ -277,6 +277,7 @@ test("supports Follow System theme mode and About tab with V0.2.0 OTA panel", as
   ).toBeTruthy();
   expect(screen.getByText(/自动下载新版本，重启后生效/)).toBeTruthy();
   expect(screen.getByRole("button", { name: /检查更新/ })).toBeTruthy();
+  expect(screen.queryByText("OTA 仓库与版本规则")).toBeNull();
   const qrImg = screen.getByAltText("微信扫码赞赏与联系作者");
   expect(qrImg.getAttribute("src")).toBe("/wechat-qr.png");
 });
@@ -368,4 +369,43 @@ test("supports episode favorites (star, play all, unfavorite), collapsible subti
   });
   await user.click(unstarBtn);
   expect(screen.getByText("还没有收藏的单集")).toBeTruthy();
+});
+
+test("desktop OTA updater checks, auto-downloads, and triggers quitAndInstall inside About tab", async () => {
+  const user = userEvent.setup();
+  const quitAndInstall = vi.fn(async () => ({ ok: true }));
+  const setAutoDownload = vi.fn(async (enabled: boolean) => enabled);
+  const checkForUpdates = vi.fn(async () => ({
+    status: "downloaded" as const,
+    currentVersion: "0.2.1",
+    latestVersion: "0.2.2",
+    percent: 100,
+    message: "新版本 V0.2.2 已下载完成，重启后即可生效",
+  }));
+
+  const prevDesktop = (window as unknown as { arbokDesktop?: unknown }).arbokDesktop;
+  (window as unknown as { arbokDesktop?: unknown }).arbokDesktop = {
+    isDesktop: true,
+    getUpdateState: vi.fn(async () => ({ status: "idle" })),
+    checkForUpdates,
+    setAutoDownload,
+    quitAndInstall,
+    onUpdateEvent: vi.fn(() => () => {}),
+  };
+
+  try {
+    render(<ArbokApp />);
+    await user.click(screen.getByRole("button", { name: /偏好设置/ }));
+    await user.click(screen.getByRole("tab", { name: "关于" }));
+    await user.click(screen.getByRole("button", { name: /检查更新/ }));
+
+    expect(checkForUpdates).toHaveBeenCalled();
+    const installBtn = await screen.findByRole("button", {
+      name: /立即重启并安装 V0\.2\.2/,
+    });
+    await user.click(installBtn);
+    expect(quitAndInstall).toHaveBeenCalledTimes(1);
+  } finally {
+    (window as unknown as { arbokDesktop?: unknown }).arbokDesktop = prevDesktop;
+  }
 });

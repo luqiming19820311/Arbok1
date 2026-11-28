@@ -427,6 +427,39 @@ export function ArbokApp() {
     };
   }, [toaster]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const bridge = (
+      window as unknown as {
+        arbokDesktop?: {
+          isDesktop?: boolean;
+          setAutoDownload?: (enabled: boolean) => Promise<boolean>;
+          onUpdateEvent?: (
+            listener: (payload: { status?: string; latestVersion?: string }) => void
+          ) => () => void;
+        };
+      }
+    ).arbokDesktop;
+    if (!bridge?.isDesktop) return;
+    void bridge.setAutoDownload?.(settings.autoDownloadUpdates ?? true);
+    let notifiedVersion: string | null = null;
+    const unsub = bridge.onUpdateEvent?.((payload) => {
+      if (
+        payload.status === "downloaded" &&
+        payload.latestVersion &&
+        payload.latestVersion !== notifiedVersion
+      ) {
+        notifiedVersion = payload.latestVersion;
+        toaster.success(
+          `新版本 V${payload.latestVersion} 已自动下载完成，可在「偏好设置 → 关于」立即重启安装`
+        );
+      }
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [settings.autoDownloadUpdates, toaster]);
+
   const currentEpisode = useMemo(
     () => episodes.find((ep) => ep.id === currentEpId) ?? episodes[0],
     [episodes, currentEpId]

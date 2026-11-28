@@ -5,7 +5,9 @@ contextBridge.exposeInMainWorld("arbokDesktop", {
   isDesktop: true,
   platform: process.platform,
   getVersion: () => ipcRenderer.invoke("arbok:get-version"),
-  checkForUpdates: () => ipcRenderer.invoke("arbok:check-update"),
+  getUpdateState: () => ipcRenderer.invoke("arbok:get-update-state"),
+  checkForUpdates: (repo) => ipcRenderer.invoke("arbok:check-update", repo),
+  downloadUpdate: () => ipcRenderer.invoke("arbok:download-update"),
   setAutoDownload: (enabled) =>
     ipcRenderer.invoke("arbok:set-auto-download", Boolean(enabled)),
   quitAndInstall: () => ipcRenderer.invoke("arbok:quit-and-install"),

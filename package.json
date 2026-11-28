@@ -1,6 +1,6 @@
 {
   "name": "arbok",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Arbok — 支持 YouTube、哔哩哔哩、播客，配中文字幕、翻译和播报、AI 导读、AI 问答与笔记功能",
   "main": "electron/main.cjs",

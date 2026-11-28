@@ -23,7 +23,7 @@ describe("GitHub OTA updates helper", () => {
   });
 
   it("compares SemVer tags accurately including prereleases", () => {
-    expect(APP_VERSION).toBe("0.2.0");
+    expect(APP_VERSION).toBe("0.2.1");
     expect(compareSemver("0.1.0", "0.1.0")).toBe(0);
     expect(compareSemver("0.1.0", "v0.1.1")).toBeGreaterThan(0);
     expect(compareSemver("0.1.0", "V0.2.0")).toBeGreaterThan(0);
